@@ -52,6 +52,40 @@ CUSTOM_COMMAND_SIG(vim_append)
 }
 
 //
+// Moving
+//
+CUSTOM_COMMAND_SIG(vim_move_left)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = view.cursor.pos - 1;
+    if (pos >= 0)
+    {
+        char c = buffer_get_char(app, &buffer, pos);
+        if (c != '\n')
+        {
+            exec_command(app, move_left);
+        }
+    }
+}
+
+CUSTOM_COMMAND_SIG(vim_move_right)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = view.cursor.pos;
+    char c = buffer_get_char(app, &buffer, pos);
+    if (c != '\n')
+    {
+        exec_command(app, move_right);
+    }
+}
+
+//
 // Bindings
 //
 
@@ -60,11 +94,11 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code)
     switch(code)
     {
         case 'a': exec_command(app, vim_append); break;
-        case 'h': exec_command(app, move_left); break;
+        case 'h': exec_command(app, vim_move_left); break;
         case 'i': exec_command(app, switch_to_insert_mode); break;
         case 'j': exec_command(app, move_down); break;
         case 'k': exec_command(app, move_up); break;
-        case 'l': exec_command(app, move_right); break;
+        case 'l': exec_command(app, vim_move_right); break;
     }
 }
 

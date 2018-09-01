@@ -21,7 +21,20 @@ START_HOOK_SIG(greedy_start)
 {
     default_start(app, files, file_count, flags, flag_count);
 
-    set_fullscreen(app, true);
+    //set_fullscreen(app, true);
+
+    Theme_Color colors[] = {
+        {Stag_Back, 0xFF002B36},
+        {Stag_Comment, 0xFF586E75},
+        {Stag_Keyword, 0xFF519E18},
+        {Stag_Preproc, 0xFFCB4B1B},
+        {Stag_Include, 0xFFCB4B1B},
+        {Stag_Highlight, 0xFFB58900},
+        {Stag_Cursor, 0xFF839496},
+    };
+    set_theme_colors(app, colors, ArrayCount(colors));
+
+    set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
 
     global_normal_mode = true;
 
@@ -110,54 +123,95 @@ CUSTOM_COMMAND_SIG(vim_move_right)
 // Bindings
 //
 
-void vim_handle_key_normal(Application_Links *app, Key_Code code)
+void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
+{
+    if (modifier == MDFR_NONE)
+    {
+        switch(code)
+        {
+            // TODO(joe): w and e aren't properly emulated with seek_token_right.
+            case 'a': exec_command(app, vim_append); break;
+            case 'b': exec_command(app, seek_token_left); break;
+            case 'e': exec_command(app, seek_token_right); break;
+            case 'h': exec_command(app, vim_move_left); break;
+            case 'i': exec_command(app, switch_to_insert_mode); break;
+            case 'j': exec_command(app, vim_move_down); break;
+            case 'k': exec_command(app, vim_move_up); break;
+            case 'l': exec_command(app, vim_move_right); break;
+            case 'u': exec_command(app, undo); break;
+            case 'w': exec_command(app, seek_token_right); break;
+            case 'x': exec_command(app, delete_char); break;
+
+            case key_back: exec_command(app, vim_move_left); break;
+        }
+    } else if (modifier == MDFR_CTRL) {
+        switch(code)
+        {
+            case 'b': exec_command(app, page_up); break;
+            case 'h': exec_command(app, change_active_panel_backwards); break;
+            case 'j': exec_command(app, change_active_panel); break;
+            case 'k': exec_command(app, change_active_panel_backwards); break;
+            case 'l': exec_command(app, change_active_panel); break;
+            case 'f': exec_command(app, page_down); break;
+            case 'r': exec_command(app, redo); break;
+        }
+    }
+}
+
+void vim_handle_key_insert(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
 {
     switch(code)
     {
-        case 'a': exec_command(app, vim_append); break;
-        case 'h': exec_command(app, vim_move_left); break;
-        case 'i': exec_command(app, switch_to_insert_mode); break;
-        case 'j': exec_command(app, vim_move_down); break;
-        case 'k': exec_command(app, vim_move_up); break;
-        case 'l': exec_command(app, vim_move_right); break;
+        case key_back: exec_command(app, backspace_char); break;
+        default: exec_command(app, write_character);
     }
 }
 
-void vim_handle_unmodified_key(Application_Links *app, Key_Code code)
+void vim_handle_key(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
 {
     if (global_normal_mode) {
-        vim_handle_key_normal(app, code);
+        vim_handle_key_normal(app, code, modifier);
     } else {
-        exec_command(app, write_character);
+        vim_handle_key_insert(app, code, modifier);
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_a) { vim_handle_unmodified_key(app, 'a'); }
-CUSTOM_COMMAND_SIG(vim_b) { vim_handle_unmodified_key(app, 'b'); }
-CUSTOM_COMMAND_SIG(vim_c) { vim_handle_unmodified_key(app, 'c'); }
-CUSTOM_COMMAND_SIG(vim_d) { vim_handle_unmodified_key(app, 'd'); }
-CUSTOM_COMMAND_SIG(vim_e) { vim_handle_unmodified_key(app, 'e'); }
-CUSTOM_COMMAND_SIG(vim_f) { vim_handle_unmodified_key(app, 'f'); }
-CUSTOM_COMMAND_SIG(vim_g) { vim_handle_unmodified_key(app, 'g'); }
-CUSTOM_COMMAND_SIG(vim_h) { vim_handle_unmodified_key(app, 'h'); }
-CUSTOM_COMMAND_SIG(vim_i) { vim_handle_unmodified_key(app, 'i'); }
-CUSTOM_COMMAND_SIG(vim_j) { vim_handle_unmodified_key(app, 'j'); }
-CUSTOM_COMMAND_SIG(vim_k) { vim_handle_unmodified_key(app, 'k'); }
-CUSTOM_COMMAND_SIG(vim_l) { vim_handle_unmodified_key(app, 'l'); }
-CUSTOM_COMMAND_SIG(vim_m) { vim_handle_unmodified_key(app, 'm'); }
-CUSTOM_COMMAND_SIG(vim_n) { vim_handle_unmodified_key(app, 'n'); }
-CUSTOM_COMMAND_SIG(vim_o) { vim_handle_unmodified_key(app, 'o'); }
-CUSTOM_COMMAND_SIG(vim_p) { vim_handle_unmodified_key(app, 'p'); }
-CUSTOM_COMMAND_SIG(vim_q) { vim_handle_unmodified_key(app, 'q'); }
-CUSTOM_COMMAND_SIG(vim_r) { vim_handle_unmodified_key(app, 'r'); }
-CUSTOM_COMMAND_SIG(vim_s) { vim_handle_unmodified_key(app, 's'); }
-CUSTOM_COMMAND_SIG(vim_t) { vim_handle_unmodified_key(app, 't'); }
-CUSTOM_COMMAND_SIG(vim_u) { vim_handle_unmodified_key(app, 'u'); }
-CUSTOM_COMMAND_SIG(vim_v) { vim_handle_unmodified_key(app, 'v'); }
-CUSTOM_COMMAND_SIG(vim_w) { vim_handle_unmodified_key(app, 'w'); }
-CUSTOM_COMMAND_SIG(vim_x) { vim_handle_unmodified_key(app, 'x'); }
-CUSTOM_COMMAND_SIG(vim_y) { vim_handle_unmodified_key(app, 'y'); }
-CUSTOM_COMMAND_SIG(vim_z) { vim_handle_unmodified_key(app, 'z'); }
+CUSTOM_COMMAND_SIG(vim_a) { vim_handle_key(app, 'a', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_b) { vim_handle_key(app, 'b', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_c) { vim_handle_key(app, 'c', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_d) { vim_handle_key(app, 'd', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_e) { vim_handle_key(app, 'e', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_f) { vim_handle_key(app, 'f', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_g) { vim_handle_key(app, 'g', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_h) { vim_handle_key(app, 'h', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_i) { vim_handle_key(app, 'i', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_j) { vim_handle_key(app, 'j', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_k) { vim_handle_key(app, 'k', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_l) { vim_handle_key(app, 'l', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_m) { vim_handle_key(app, 'm', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_n) { vim_handle_key(app, 'n', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_o) { vim_handle_key(app, 'o', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_p) { vim_handle_key(app, 'p', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_q) { vim_handle_key(app, 'q', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_r) { vim_handle_key(app, 'r', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_s) { vim_handle_key(app, 's', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_t) { vim_handle_key(app, 't', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_u) { vim_handle_key(app, 'u', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_v) { vim_handle_key(app, 'v', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_w) { vim_handle_key(app, 'w', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_x) { vim_handle_key(app, 'x', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_y) { vim_handle_key(app, 'y', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_z) { vim_handle_key(app, 'z', MDFR_NONE); }
+
+CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
+
+CUSTOM_COMMAND_SIG(vim_b_ctrl) { vim_handle_key(app, 'b', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_h_ctrl) { vim_handle_key(app, 'h', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_j_ctrl) { vim_handle_key(app, 'j', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_k_ctrl) { vim_handle_key(app, 'k', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_l_ctrl) { vim_handle_key(app, 'l', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_f_ctrl) { vim_handle_key(app, 'f', MDFR_CTRL); }
+CUSTOM_COMMAND_SIG(vim_r_ctrl) { vim_handle_key(app, 'r', MDFR_CTRL); }
 
 extern "C" GET_BINDING_DATA(get_bindings)
 {
@@ -169,6 +223,13 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_open_file_hook(context, default_file_settings);
     //set_scroll_rule(context, casey_smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
+
+    begin_map(context, mapid_global);
+    {
+        // TODO(joe): Reroute this thru the vim stuff to revert to normal mode?
+        bind(context, 'p', MDFR_CTRL, interactive_open_or_new);
+    }
+    end_map(context);
 
     begin_map(context, mapid_file);
     {
@@ -204,6 +265,16 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'x', MDFR_NONE, vim_x);
         bind(context, 'y', MDFR_NONE, vim_y);
         bind(context, 'z', MDFR_NONE, vim_z);
+
+        bind(context, key_back, MDFR_NONE, vim_backspace);
+
+        bind(context, 'b', MDFR_CTRL, vim_b_ctrl);
+        bind(context, 'h', MDFR_CTRL, vim_h_ctrl);
+        bind(context, 'j', MDFR_CTRL, vim_j_ctrl);
+        bind(context, 'k', MDFR_CTRL, vim_k_ctrl);
+        bind(context, 'l', MDFR_CTRL, vim_l_ctrl);
+        bind(context, 'f', MDFR_CTRL, vim_f_ctrl);
+        bind(context, 'r', MDFR_CTRL, vim_r_ctrl);
 
         bind(context, key_f4, MDFR_ALT, exit_4coder);
     }

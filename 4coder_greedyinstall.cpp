@@ -54,20 +54,42 @@ CUSTOM_COMMAND_SIG(vim_append)
 //
 // Moving
 //
+CUSTOM_COMMAND_SIG(vim_move_up)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
+    if (line > 1)
+    {
+        exec_command(app, move_up);
+    }
+}
+
+CUSTOM_COMMAND_SIG(vim_move_down)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
+    if (line < buffer.line_count)
+    {
+        exec_command(app, move_down);
+    }
+}
+
 CUSTOM_COMMAND_SIG(vim_move_left)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-    int pos = view.cursor.pos - 1;
-    if (pos >= 0)
+    int line_start = buffer_get_line_start(app, &buffer, view.cursor.line);
+    if (view.cursor.pos != line_start)
     {
-        char c = buffer_get_char(app, &buffer, pos);
-        if (c != '\n')
-        {
-            exec_command(app, move_left);
-        }
+        exec_command(app, move_left);
     }
 }
 
@@ -77,9 +99,8 @@ CUSTOM_COMMAND_SIG(vim_move_right)
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-    int pos = view.cursor.pos;
-    char c = buffer_get_char(app, &buffer, pos);
-    if (c != '\n')
+    int line_end = buffer_get_line_end(app, &buffer, view.cursor.line);
+    if (view.cursor.pos != line_end)
     {
         exec_command(app, move_right);
     }
@@ -96,8 +117,8 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code)
         case 'a': exec_command(app, vim_append); break;
         case 'h': exec_command(app, vim_move_left); break;
         case 'i': exec_command(app, switch_to_insert_mode); break;
-        case 'j': exec_command(app, move_down); break;
-        case 'k': exec_command(app, move_up); break;
+        case 'j': exec_command(app, vim_move_down); break;
+        case 'k': exec_command(app, vim_move_up); break;
         case 'l': exec_command(app, vim_move_right); break;
     }
 }

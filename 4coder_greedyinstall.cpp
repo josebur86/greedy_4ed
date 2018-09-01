@@ -18,7 +18,6 @@ static bool global_normal_mode = true;
  */
 
 /* TODO(joe): VIM TODO
- *  - Mode indication (change cursor and top bar color?)
  *  - o O
  *  - y yy
  *  - p P
@@ -28,6 +27,7 @@ static bool global_normal_mode = true;
  *  - visual mode
  *  - visual block mode
  *  - . "dot" support
+ *  - Completion
  *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
  *  - File commands (gf)
  *  - Brace matching %
@@ -40,7 +40,30 @@ static bool global_normal_mode = true;
  *  - find corresponding file and display in other panel (h <-> cpp)
  *  - Macro support
  *  - show line numbers? (Not sure if 4coder supports this yet)
+ *  - Animated scrolling @Fun
  */
+
+static void sync_to_mode(Application_Links *app)
+{
+    unsigned int insert = 0xFF719E07;
+    unsigned int normal = 0xFF839496;
+
+    Theme_Color normal_mode_colors[] = {
+        {Stag_Cursor, normal},
+        {Stag_Margin_Active, normal},
+    };
+
+    Theme_Color insert_mode_colors[] = {
+        {Stag_Cursor, insert},
+        {Stag_Margin_Active, insert},
+    };
+
+    if (global_normal_mode) {
+        set_theme_colors(app, normal_mode_colors, ArrayCount(normal_mode_colors));
+    } else {
+        set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
+    }
+}
 
 START_HOOK_SIG(greedy_start)
 {
@@ -50,18 +73,20 @@ START_HOOK_SIG(greedy_start)
 
     Theme_Color colors[] = {
         {Stag_Back, 0xFF002B36},
+        {Stag_Bar, 0xFF839496},
         {Stag_Comment, 0xFF586E75},
         {Stag_Keyword, 0xFF519E18},
         {Stag_Preproc, 0xFFCB4B1B},
         {Stag_Include, 0xFFCB4B1B},
         {Stag_Highlight, 0xFFB58900},
-        {Stag_Cursor, 0xFF839496},
+        {Stag_Margin_Active, 0xFF719E07},
     };
     set_theme_colors(app, colors, ArrayCount(colors));
 
     set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
 
     global_normal_mode = true;
+    sync_to_mode(app);
 
     return 0;
 }
@@ -73,11 +98,13 @@ START_HOOK_SIG(greedy_start)
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 {
     global_normal_mode = false;
+    sync_to_mode(app);
 }
 
 CUSTOM_COMMAND_SIG(switch_to_normal_mode)
 {
     global_normal_mode = true;
+    sync_to_mode(app);
 }
 
 //

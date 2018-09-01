@@ -17,6 +17,31 @@ static bool global_normal_mode = true;
  * MDFR_SHIFT
  */
 
+/* TODO(joe): VIM TODO
+ *  - Mode indication (change cursor and top bar color?)
+ *  - o O
+ *  - y yy
+ *  - p P
+ *  - search
+ *  - Movement Chord support (d, r, c)
+ *  - Registers
+ *  - visual mode
+ *  - visual block mode
+ *  - . "dot" support
+ *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
+ *  - File commands (gf)
+ *  - Brace matching %
+ *  - Find/Replace
+ *  - Find in Files
+ *  - ctag support? does 4coder have something better?
+ *  - ctrl-a addition, ctrl-x subtraction
+ *  - highlight word under cursor
+ *  - find corresponding file (h <-> cpp)
+ *  - find corresponding file and display in other panel (h <-> cpp)
+ *  - Macro support
+ *  - show line numbers? (Not sure if 4coder supports this yet)
+ */
+
 START_HOOK_SIG(greedy_start)
 {
     default_start(app, files, file_count, flags, flag_count);
@@ -93,30 +118,66 @@ CUSTOM_COMMAND_SIG(vim_move_down)
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_move_left)
+static bool at_line_boundary(Application_Links *app, bool moving_left)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-    int line_start = buffer_get_line_start(app, &buffer, view.cursor.line);
-    if (view.cursor.pos != line_start)
-    {
+    int boundary_pos = (moving_left) ? buffer_get_line_start(app, &buffer, view.cursor.line)
+                                     : buffer_get_line_end(app, &buffer, view.cursor.line);
+    return (view.cursor.pos == boundary_pos);
+}
+
+
+CUSTOM_COMMAND_SIG(vim_move_left)
+{
+    if (!at_line_boundary(app, true)) {
         exec_command(app, move_left);
     }
 }
 
 CUSTOM_COMMAND_SIG(vim_move_right)
 {
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int line_end = buffer_get_line_end(app, &buffer, view.cursor.line);
-    if (view.cursor.pos != line_end)
-    {
+    if (!at_line_boundary(app, false)) {
         exec_command(app, move_right);
     }
+}
+
+CUSTOM_COMMAND_SIG(vim_seek_white_or_token_left)
+{
+    if (!at_line_boundary(app, true)) {
+        exec_command(app, seek_white_or_token_left);
+    }
+}
+
+CUSTOM_COMMAND_SIG(vim_seek_white_or_token_right)
+{
+    if (!at_line_boundary(app, false)) {
+        exec_command(app, seek_white_or_token_right);
+    }
+}
+
+CUSTOM_COMMAND_SIG(vim_ex_command)
+{
+    char command[1024];
+
+    Query_Bar bar;
+    bar.prompt = make_lit_string(":");
+    bar.string = make_fixed_width_string(command);
+
+    if (query_user_string(app, &bar)) {
+        if (match(bar.string, make_lit_string("w"))) {
+            exec_command(app, save);
+        } else if (match(bar.string, make_lit_string("wa"))) {
+            exec_command(app, save_all_dirty_buffers);
+        } else if (match(bar.string, make_lit_string("q"))) {
+            exec_command(app, kill_buffer);
+            exec_command(app, close_panel);
+        }
+    }
+
+    end_query_bar(app, &bar, 0);
 }
 
 //
@@ -131,18 +192,21 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
         {
             // TODO(joe): w and e aren't properly emulated with seek_token_right.
             case 'a': exec_command(app, vim_append); break;
-            case 'b': exec_command(app, seek_token_left); break;
-            case 'e': exec_command(app, seek_token_right); break;
+            case 'b': exec_command(app, vim_seek_white_or_token_left); break;
+            case 'e': exec_command(app, vim_seek_white_or_token_right); break;
             case 'h': exec_command(app, vim_move_left); break;
             case 'i': exec_command(app, switch_to_insert_mode); break;
             case 'j': exec_command(app, vim_move_down); break;
             case 'k': exec_command(app, vim_move_up); break;
             case 'l': exec_command(app, vim_move_right); break;
             case 'u': exec_command(app, undo); break;
-            case 'w': exec_command(app, seek_token_right); break;
+            case 'w': exec_command(app, vim_seek_white_or_token_right); break;
             case 'x': exec_command(app, delete_char); break;
 
             case key_back: exec_command(app, vim_move_left); break;
+            case '$': exec_command(app, seek_end_of_line); break;
+            case '^': exec_command(app, seek_beginning_of_line); break;
+            case ':': exec_command(app, vim_ex_command); break;
         }
     } else if (modifier == MDFR_CTRL) {
         switch(code)
@@ -204,6 +268,8 @@ CUSTOM_COMMAND_SIG(vim_y) { vim_handle_key(app, 'y', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_z) { vim_handle_key(app, 'z', MDFR_NONE); }
 
 CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_dollar) { vim_handle_key(app, '$', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_hat) { vim_handle_key(app, '^', MDFR_NONE); }
 
 CUSTOM_COMMAND_SIG(vim_b_ctrl) { vim_handle_key(app, 'b', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_h_ctrl) { vim_handle_key(app, 'h', MDFR_CTRL); }
@@ -212,6 +278,8 @@ CUSTOM_COMMAND_SIG(vim_k_ctrl) { vim_handle_key(app, 'k', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_l_ctrl) { vim_handle_key(app, 'l', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_f_ctrl) { vim_handle_key(app, 'f', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_r_ctrl) { vim_handle_key(app, 'r', MDFR_CTRL); }
+
+CUSTOM_COMMAND_SIG(vim_colon) { vim_handle_key(app, ':', MDFR_NONE); }
 
 extern "C" GET_BINDING_DATA(get_bindings)
 {
@@ -237,6 +305,9 @@ extern "C" GET_BINDING_DATA(get_bindings)
 
         // Mode switching
         bind(context, key_esc, MDFR_NONE, switch_to_normal_mode);
+        // TODO(joe): Incremental search
+        // Commands
+        bind(context, ':', MDFR_NONE, vim_colon);
 
         // Character Keys
         bind(context, 'a', MDFR_NONE, vim_a);
@@ -267,6 +338,8 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'z', MDFR_NONE, vim_z);
 
         bind(context, key_back, MDFR_NONE, vim_backspace);
+        bind(context, '$', MDFR_NONE, vim_dollar);
+        bind(context, '^', MDFR_NONE, vim_hat);
 
         bind(context, 'b', MDFR_CTRL, vim_b_ctrl);
         bind(context, 'h', MDFR_CTRL, vim_h_ctrl);

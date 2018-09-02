@@ -1,6 +1,13 @@
 #include "4coder_default_include.cpp"
 
+enum CommandMode
+{
+    NONE = 0,
+    G_COMMANDS,
+};
+
 static bool global_normal_mode = true;
+static CommandMode global_command_mode = NONE;
 
 /* NOTE(joe): Available command maps
  * mapid_global
@@ -18,7 +25,7 @@ static bool global_normal_mode = true;
  */
 
 /* TODO(joe): VIM TODO
- *  - gg G
+ *  - G
  *  - Mouse integration
  *  - search
  *  - y yy
@@ -45,6 +52,10 @@ static bool global_normal_mode = true;
  *  - Hide the mouse cursor unless it moves.
  */
 
+//
+// Helpers
+//
+
 static void sync_to_mode(Application_Links *app)
 {
     unsigned int insert = 0xFF719E07;
@@ -66,6 +77,21 @@ static void sync_to_mode(Application_Links *app)
         set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
     }
 }
+
+static void enter_g_command_mode()
+{
+    global_command_mode = G_COMMANDS;
+}
+
+static void exit_g_command_mode()
+{
+    global_command_mode = NONE;
+}
+
+
+//
+//
+//
 
 START_HOOK_SIG(greedy_start)
 {
@@ -108,6 +134,21 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
 {
     global_normal_mode = true;
     sync_to_mode(app);
+}
+
+CUSTOM_COMMAND_SIG(handle_g_key)
+{
+    if (global_command_mode == NONE) {
+        enter_g_command_mode();
+    } else if (global_command_mode == G_COMMANDS) {
+        // Go to the top of the file
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Seek seek = seek_pos(0);
+        view_set_cursor(app, &view, seek, true);
+
+        exit_g_command_mode();
+    }
 }
 
 //
@@ -242,6 +283,7 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case 'a': exec_command(app, vim_append); break;
             case 'b': exec_command(app, vim_seek_white_or_token_left); break;
             case 'e': exec_command(app, vim_seek_white_or_token_right); break;
+            case 'g': exec_command(app, handle_g_key); break;
             case 'h': exec_command(app, vim_move_left); break;
             case 'i': exec_command(app, switch_to_insert_mode); break;
             case 'j': exec_command(app, vim_move_down); break;

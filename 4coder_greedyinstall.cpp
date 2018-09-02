@@ -25,13 +25,12 @@ static CommandMode global_command_mode = NONE;
  */
 
 /* TODO(joe): VIM TODO
- *  - G
- *  - Mouse integration
- *  - search
  *  - y yy
  *  - p P
  *  - Movement Chord support (d, r, c)
  *  - Registers
+ *  - Mouse integration
+ *  - search
  *  - visual mode
  *  - visual block mode
  *  - . "dot" support
@@ -87,7 +86,6 @@ static void exit_g_command_mode()
 {
     global_command_mode = NONE;
 }
-
 
 //
 //
@@ -246,6 +244,14 @@ CUSTOM_COMMAND_SIG(vim_seek_white_or_token_right)
     }
 }
 
+CUSTOM_COMMAND_SIG(vim_seek_to_file_end)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Seek seek = seek_xy(0.0f, max_f32, 1, true);
+    view_set_cursor(app, &view, seek, true);
+}
+
 CUSTOM_COMMAND_SIG(vim_ex_command)
 {
     char command[1024];
@@ -294,6 +300,7 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case 'w': exec_command(app, vim_seek_white_or_token_right); break;
             case 'x': exec_command(app, delete_char); break;
 
+            case 'G': exec_command(app, vim_seek_to_file_end); break;
             case 'O': exec_command(app, vim_newline_above_then_insert); break;
 
             case key_back: exec_command(app, vim_move_left); break;
@@ -362,6 +369,8 @@ CUSTOM_COMMAND_SIG(vim_y) { vim_handle_key(app, 'y', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_z) { vim_handle_key(app, 'z', MDFR_NONE); }
 
 CUSTOM_COMMAND_SIG(vim_cap_o) { vim_handle_key(app, 'O', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_cap_g) { vim_handle_key(app, 'G', MDFR_NONE); }
+
 
 CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_dollar) { vim_handle_key(app, '$', MDFR_NONE); }
@@ -435,6 +444,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'y', MDFR_NONE, vim_y);
         bind(context, 'z', MDFR_NONE, vim_z);
 
+        bind(context, 'G', MDFR_NONE, vim_cap_g);
         bind(context, 'O', MDFR_NONE, vim_cap_o);
 
         bind(context, key_back, MDFR_NONE, vim_backspace);

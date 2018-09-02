@@ -18,7 +18,6 @@ static bool global_normal_mode = true;
  */
 
 /* TODO(joe): VIM TODO
- *  - o O
  *  - y yy
  *  - p P
  *  - search
@@ -41,6 +40,7 @@ static bool global_normal_mode = true;
  *  - Macro support
  *  - show line numbers? (Not sure if 4coder supports this yet)
  *  - Animated scrolling @Fun
+ *  - Hide the mouse cursor unless it moves.
  */
 
 static void sync_to_mode(Application_Links *app)
@@ -95,6 +95,7 @@ START_HOOK_SIG(greedy_start)
 // Mode Switching
 //
 
+// TODO(joe): Should these be commands or just functions that are called?
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 {
     global_normal_mode = false;
@@ -114,6 +115,21 @@ CUSTOM_COMMAND_SIG(vim_append)
 {
     exec_command(app, switch_to_insert_mode);
     // TODO(joe): Position the cursor correctly.
+}
+
+CUSTOM_COMMAND_SIG(vim_newline_below_then_insert)
+{
+    exec_command(app, seek_end_of_line);
+    write_string(app, make_lit_string("\n"));
+    exec_command(app, switch_to_insert_mode);
+}
+
+CUSTOM_COMMAND_SIG(vim_newline_above_then_insert)
+{
+    exec_command(app, seek_beginning_of_line);
+    write_string(app, make_lit_string("\n"));
+    exec_command(app, move_up);
+    exec_command(app, switch_to_insert_mode);
 }
 
 //
@@ -218,6 +234,7 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
         switch(code)
         {
             // TODO(joe): w and e aren't properly emulated with seek_token_right.
+            // Might need to use the streaming interface to determine words, characters, etc
             case 'a': exec_command(app, vim_append); break;
             case 'b': exec_command(app, vim_seek_white_or_token_left); break;
             case 'e': exec_command(app, vim_seek_white_or_token_right); break;
@@ -226,9 +243,12 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case 'j': exec_command(app, vim_move_down); break;
             case 'k': exec_command(app, vim_move_up); break;
             case 'l': exec_command(app, vim_move_right); break;
+            case 'o': exec_command(app, vim_newline_below_then_insert); break;
             case 'u': exec_command(app, undo); break;
             case 'w': exec_command(app, vim_seek_white_or_token_right); break;
             case 'x': exec_command(app, delete_char); break;
+
+            case 'O': exec_command(app, vim_newline_above_then_insert); break;
 
             case key_back: exec_command(app, vim_move_left); break;
             case '$': exec_command(app, seek_end_of_line); break;
@@ -294,6 +314,8 @@ CUSTOM_COMMAND_SIG(vim_x) { vim_handle_key(app, 'x', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_y) { vim_handle_key(app, 'y', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_z) { vim_handle_key(app, 'z', MDFR_NONE); }
 
+CUSTOM_COMMAND_SIG(vim_cap_o) { vim_handle_key(app, 'O', MDFR_NONE); }
+
 CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_dollar) { vim_handle_key(app, '$', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_hat) { vim_handle_key(app, '^', MDFR_NONE); }
@@ -305,6 +327,7 @@ CUSTOM_COMMAND_SIG(vim_k_ctrl) { vim_handle_key(app, 'k', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_l_ctrl) { vim_handle_key(app, 'l', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_f_ctrl) { vim_handle_key(app, 'f', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_r_ctrl) { vim_handle_key(app, 'r', MDFR_CTRL); }
+
 
 CUSTOM_COMMAND_SIG(vim_colon) { vim_handle_key(app, ':', MDFR_NONE); }
 
@@ -364,6 +387,8 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'y', MDFR_NONE, vim_y);
         bind(context, 'z', MDFR_NONE, vim_z);
 
+        bind(context, 'O', MDFR_NONE, vim_cap_o);
+
         bind(context, key_back, MDFR_NONE, vim_backspace);
         bind(context, '$', MDFR_NONE, vim_dollar);
         bind(context, '^', MDFR_NONE, vim_hat);
@@ -375,6 +400,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'l', MDFR_CTRL, vim_l_ctrl);
         bind(context, 'f', MDFR_CTRL, vim_f_ctrl);
         bind(context, 'r', MDFR_CTRL, vim_r_ctrl);
+
 
         bind(context, key_f4, MDFR_ALT, exit_4coder);
     }

@@ -18,9 +18,11 @@ static bool global_normal_mode = true;
  */
 
 /* TODO(joe): VIM TODO
+ *  - gg G
+ *  - Mouse integration
+ *  - search
  *  - y yy
  *  - p P
- *  - search
  *  - Movement Chord support (d, r, c)
  *  - Registers
  *  - visual mode
@@ -121,6 +123,7 @@ CUSTOM_COMMAND_SIG(vim_newline_below_then_insert)
 {
     exec_command(app, seek_end_of_line);
     write_string(app, make_lit_string("\n"));
+    exec_command(app, auto_tab_line_at_cursor);
     exec_command(app, switch_to_insert_mode);
 }
 
@@ -129,6 +132,7 @@ CUSTOM_COMMAND_SIG(vim_newline_above_then_insert)
     exec_command(app, seek_beginning_of_line);
     write_string(app, make_lit_string("\n"));
     exec_command(app, move_up);
+    exec_command(app, auto_tab_line_at_cursor);
     exec_command(app, switch_to_insert_mode);
 }
 
@@ -254,6 +258,7 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case '$': exec_command(app, seek_end_of_line); break;
             case '^': exec_command(app, seek_beginning_of_line); break;
             case ':': exec_command(app, vim_ex_command); break;
+            case '/': exec_command(app, search_identifier); break;
         }
     } else if (modifier == MDFR_CTRL) {
         switch(code)
@@ -319,6 +324,7 @@ CUSTOM_COMMAND_SIG(vim_cap_o) { vim_handle_key(app, 'O', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_dollar) { vim_handle_key(app, '$', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_hat) { vim_handle_key(app, '^', MDFR_NONE); }
+CUSTOM_COMMAND_SIG(vim_forward_slash) { vim_handle_key(app, '/', MDFR_NONE); }
 
 CUSTOM_COMMAND_SIG(vim_b_ctrl) { vim_handle_key(app, 'b', MDFR_CTRL); }
 CUSTOM_COMMAND_SIG(vim_h_ctrl) { vim_handle_key(app, 'h', MDFR_CTRL); }
@@ -392,6 +398,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, key_back, MDFR_NONE, vim_backspace);
         bind(context, '$', MDFR_NONE, vim_dollar);
         bind(context, '^', MDFR_NONE, vim_hat);
+        bind(context, '/', MDFR_NONE, vim_forward_slash);
 
         bind(context, 'b', MDFR_CTRL, vim_b_ctrl);
         bind(context, 'h', MDFR_CTRL, vim_h_ctrl);
@@ -401,8 +408,8 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, 'f', MDFR_CTRL, vim_f_ctrl);
         bind(context, 'r', MDFR_CTRL, vim_r_ctrl);
 
-
         bind(context, key_f4, MDFR_ALT, exit_4coder);
+        bind(context, '\n', MDFR_ALT, toggle_fullscreen);
     }
     end_map(context);
 

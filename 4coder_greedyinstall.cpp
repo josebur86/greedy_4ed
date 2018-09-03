@@ -2,6 +2,63 @@
 
 #define max(a, b) ((a)>(b)) ? a : b
 
+START_HOOK_SIG(greedy_start)
+{
+    default_start(app, files, file_count, flags, flag_count);
+
+    //set_fullscreen(app, true);
+
+    Theme_Color colors[] = {
+        {Stag_Back, 0xFF002B36},
+        {Stag_Bar, 0xFF839496},
+        {Stag_Comment, 0xFF586E75},
+        {Stag_Keyword, 0xFF519E18},
+        {Stag_Preproc, 0xFFCB4B1B},
+        {Stag_Include, 0xFFCB4B1B},
+        {Stag_Highlight, 0xFFB58900},
+        {Stag_Margin_Active, 0xFF719E07},
+    };
+    set_theme_colors(app, colors, ArrayCount(colors));
+
+    set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
+
+    global_normal_mode = true;
+    sync_to_mode(app);
+
+    return 0;
+}
+
+//
+// VIM Start
+//
+
+/* TODO(joe): VIM TODO
+ *  - p P
+ *  - y
+ *  - Movement Chord support (d, r, c)
+ *  - Registers
+ *  - Mouse integration
+ *  - search
+ *  - visual mode (view_set_highlight)
+ *  - visual block mode
+ *  - . "dot" support
+ *  - Completion
+ *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
+ *  - File commands (gf)
+ *  - Brace matching %
+ *  - Find/Replace
+ *  - Find in Files
+ *  - ctag support? does 4coder have something better?
+ *  - ctrl-a addition, ctrl-x subtraction
+ *  - highlight word under cursor
+ *  - find corresponding file (h <-> cpp)
+ *  - find corresponding file and display in other panel (h <-> cpp)
+ *  - Macro support
+ *  - show line numbers? (Not sure if 4coder supports this yet)
+ *  - Animated scrolling @Fun
+ *  - Hide the mouse cursor unless it moves.
+ */
+
 enum CommandMode
 {
     NONE = 0,
@@ -28,52 +85,7 @@ static CommandMode global_command_mode = NONE;
 
 static Register global_yank_register = {0};
 
-/* NOTE(joe): Available command maps
- * mapid_global
- * mapid_file
- * mapid_ui
- * mapid_nomap
- */
-
-/* NOTE(joe): Key Modifier enums
- * MDFR_NONE
- * MDFR_CTRL
- * MDFR_ALT
- * MDFR_CMND
- * MDFR_SHIFT
- */
-
-/* TODO(joe): VIM TODO
- *  - y yy
- *  - p P
- *  - Movement Chord support (d, r, c)
- *  - Registers
- *  - Mouse integration
- *  - search
- *  - visual mode (view_set_highlight)
- *  - visual block mode
- *  - . "dot" support
- *  - Completion
- *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
- *  - File commands (gf)
- *  - Brace matching %
- *  - Find/Replace
- *  - Find in Files
- *  - ctag support? does 4coder have something better?
- *  - ctrl-a addition, ctrl-x subtraction
- *  - highlight word under cursor
- *  - find corresponding file (h <-> cpp)
- *  - find corresponding file and display in other panel (h <-> cpp)
- *  - Macro support
- *  - show line numbers? (Not sure if 4coder supports this yet)
- *  - Animated scrolling @Fun
- *  - Hide the mouse cursor unless it moves.
- */
-
-//
 // Helpers
-//
-
 static void sync_to_mode(Application_Links *app)
 {
     unsigned int insert = 0xFF719E07;
@@ -111,35 +123,6 @@ static void enter_none_command_mode()
     global_command_mode = NONE;
 }
 
-//
-//
-//
-
-START_HOOK_SIG(greedy_start)
-{
-    default_start(app, files, file_count, flags, flag_count);
-
-    //set_fullscreen(app, true);
-
-    Theme_Color colors[] = {
-        {Stag_Back, 0xFF002B36},
-        {Stag_Bar, 0xFF839496},
-        {Stag_Comment, 0xFF586E75},
-        {Stag_Keyword, 0xFF519E18},
-        {Stag_Preproc, 0xFFCB4B1B},
-        {Stag_Include, 0xFFCB4B1B},
-        {Stag_Highlight, 0xFFB58900},
-        {Stag_Margin_Active, 0xFF719E07},
-    };
-    set_theme_colors(app, colors, ArrayCount(colors));
-
-    set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
-
-    global_normal_mode = true;
-    sync_to_mode(app);
-
-    return 0;
-}
 
 //
 // Mode Switching
@@ -326,9 +309,9 @@ CUSTOM_COMMAND_SIG(vim_ex_command)
 // Bindings
 //
 
-void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
+static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
 {
-    if (modifier == MDFR_NONE)
+    if (modifier == MDFR_NONE || modifier == MDFR_SHIFT)
     {
         switch(code)
         {
@@ -358,7 +341,9 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case ':': exec_command(app, vim_ex_command); break;
             case '/': exec_command(app, search_identifier); break;
         }
-    } else if (modifier == MDFR_CTRL) {
+    }
+    else if (modifier == MDFR_CTRL)
+    {
         switch(code)
         {
             case 'b': exec_command(app, page_up); break;
@@ -377,67 +362,34 @@ void vim_handle_key_insert(Application_Links *app, Key_Code code, Key_Modifier_F
     switch(code)
     {
         case key_back: exec_command(app, backspace_char); break;
+        case key_esc: exec_command(app, switch_to_normal_mode); break;
         default: exec_command(app, write_character);
     }
 }
 
-void vim_handle_key(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
+CUSTOM_COMMAND_SIG(vim_handle_key)
 {
-    if (global_normal_mode) {
-        vim_handle_key_normal(app, code, modifier);
-    } else {
-        vim_handle_key_insert(app, code, modifier);
+    User_Input input = get_command_input(app);
+    if (input.abort) return;
+
+    if (input.type == UserInputKey) {
+        Key_Modifier_Flag modifier = MDFR_NONE;
+        if (input.key.modifiers[MDFR_SHIFT_INDEX])   { modifier |= MDFR_SHIFT; }
+        if (input.key.modifiers[MDFR_CONTROL_INDEX]) { modifier |= MDFR_CTRL; }
+        if (input.key.modifiers[MDFR_ALT_INDEX])     { modifier |= MDFR_ALT; }
+        if (input.key.modifiers[MDFR_COMMAND_INDEX]) { modifier |= MDFR_CMND; }
+
+        if (global_normal_mode) {
+            vim_handle_key_normal(app, input.key.keycode, modifier);
+        } else {
+            vim_handle_key_insert(app, input.key.keycode, modifier);
+        }
     }
 }
 
-// TODO(joe): I think this can be cleaned up to just one CUSTOM_COMMAND_SIG by
-// getting the User_Input struct via get_command_input(). @Refactor
-CUSTOM_COMMAND_SIG(vim_a) { vim_handle_key(app, 'a', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_b) { vim_handle_key(app, 'b', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_c) { vim_handle_key(app, 'c', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_d) { vim_handle_key(app, 'd', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_e) { vim_handle_key(app, 'e', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_f) { vim_handle_key(app, 'f', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_g) { vim_handle_key(app, 'g', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_h) { vim_handle_key(app, 'h', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_i) { vim_handle_key(app, 'i', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_j) { vim_handle_key(app, 'j', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_k) { vim_handle_key(app, 'k', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_l) { vim_handle_key(app, 'l', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_m) { vim_handle_key(app, 'm', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_n) { vim_handle_key(app, 'n', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_o) { vim_handle_key(app, 'o', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_p) { vim_handle_key(app, 'p', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_q) { vim_handle_key(app, 'q', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_r) { vim_handle_key(app, 'r', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_s) { vim_handle_key(app, 's', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_t) { vim_handle_key(app, 't', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_u) { vim_handle_key(app, 'u', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_v) { vim_handle_key(app, 'v', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_w) { vim_handle_key(app, 'w', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_x) { vim_handle_key(app, 'x', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_y) { vim_handle_key(app, 'y', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_z) { vim_handle_key(app, 'z', MDFR_NONE); }
-
-CUSTOM_COMMAND_SIG(vim_cap_o) { vim_handle_key(app, 'O', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_cap_g) { vim_handle_key(app, 'G', MDFR_NONE); }
-
-
-CUSTOM_COMMAND_SIG(vim_backspace) { vim_handle_key(app, key_back, MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_dollar) { vim_handle_key(app, '$', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_hat) { vim_handle_key(app, '^', MDFR_NONE); }
-CUSTOM_COMMAND_SIG(vim_forward_slash) { vim_handle_key(app, '/', MDFR_NONE); }
-
-CUSTOM_COMMAND_SIG(vim_b_ctrl) { vim_handle_key(app, 'b', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_h_ctrl) { vim_handle_key(app, 'h', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_j_ctrl) { vim_handle_key(app, 'j', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_k_ctrl) { vim_handle_key(app, 'k', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_l_ctrl) { vim_handle_key(app, 'l', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_f_ctrl) { vim_handle_key(app, 'f', MDFR_CTRL); }
-CUSTOM_COMMAND_SIG(vim_r_ctrl) { vim_handle_key(app, 'r', MDFR_CTRL); }
-
-
-CUSTOM_COMMAND_SIG(vim_colon) { vim_handle_key(app, ':', MDFR_NONE); }
+//
+//
+//
 
 extern "C" GET_BINDING_DATA(get_bindings)
 {
@@ -452,67 +404,32 @@ extern "C" GET_BINDING_DATA(get_bindings)
 
     begin_map(context, mapid_global);
     {
-        // TODO(joe): Reroute this thru the vim stuff to revert to normal mode?
+        // Ctrl-P style file handling
         bind(context, 'p', MDFR_CTRL, interactive_open_or_new);
     }
     end_map(context);
 
+    // TODO(joe): Is it possibel to define my own mapid? Why should I?
     begin_map(context, mapid_file);
     {
         bind_vanilla_keys(context, write_character);
 
-        // Mode switching
-        bind(context, key_esc, MDFR_NONE, switch_to_normal_mode);
-        // TODO(joe): Incremental search
-        // Commands
-        bind(context, ':', MDFR_NONE, vim_colon);
-
-        // Character Keys
-        bind(context, 'a', MDFR_NONE, vim_a);
-        bind(context, 'b', MDFR_NONE, vim_b);
-        bind(context, 'c', MDFR_NONE, vim_c);
-        bind(context, 'd', MDFR_NONE, vim_d);
-        bind(context, 'e', MDFR_NONE, vim_e);
-        bind(context, 'f', MDFR_NONE, vim_f);
-        bind(context, 'g', MDFR_NONE, vim_g);
-        bind(context, 'h', MDFR_NONE, vim_h);
-        bind(context, 'i', MDFR_NONE, vim_i);
-        bind(context, 'j', MDFR_NONE, vim_j);
-        bind(context, 'k', MDFR_NONE, vim_k);
-        bind(context, 'l', MDFR_NONE, vim_l);
-        bind(context, 'm', MDFR_NONE, vim_m);
-        bind(context, 'n', MDFR_NONE, vim_n);
-        bind(context, 'o', MDFR_NONE, vim_o);
-        bind(context, 'p', MDFR_NONE, vim_p);
-        bind(context, 'q', MDFR_NONE, vim_q);
-        bind(context, 'r', MDFR_NONE, vim_r);
-        bind(context, 's', MDFR_NONE, vim_s);
-        bind(context, 't', MDFR_NONE, vim_t);
-        bind(context, 'u', MDFR_NONE, vim_u);
-        bind(context, 'v', MDFR_NONE, vim_v);
-        bind(context, 'w', MDFR_NONE, vim_w);
-        bind(context, 'x', MDFR_NONE, vim_x);
-        bind(context, 'y', MDFR_NONE, vim_y);
-        bind(context, 'z', MDFR_NONE, vim_z);
-
-        bind(context, 'G', MDFR_NONE, vim_cap_g);
-        bind(context, 'O', MDFR_NONE, vim_cap_o);
-
-        bind(context, key_back, MDFR_NONE, vim_backspace);
-        bind(context, '$', MDFR_NONE, vim_dollar);
-        bind(context, '^', MDFR_NONE, vim_hat);
-        bind(context, '/', MDFR_NONE, vim_forward_slash);
-
-        bind(context, 'b', MDFR_CTRL, vim_b_ctrl);
-        bind(context, 'h', MDFR_CTRL, vim_h_ctrl);
-        bind(context, 'j', MDFR_CTRL, vim_j_ctrl);
-        bind(context, 'k', MDFR_CTRL, vim_k_ctrl);
-        bind(context, 'l', MDFR_CTRL, vim_l_ctrl);
-        bind(context, 'f', MDFR_CTRL, vim_f_ctrl);
-        bind(context, 'r', MDFR_CTRL, vim_r_ctrl);
-
+        //
+        // 4coder specific
+        //
         bind(context, key_f4, MDFR_ALT, exit_4coder);
         bind(context, '\n', MDFR_ALT, toggle_fullscreen);
+
+        //
+        // VIM
+        //
+        bind(context, key_esc, MDFR_NONE, vim_handle_key);
+        bind(context, key_back, MDFR_NONE, vim_handle_key);
+
+        for (Key_Code code = '!'; code <= '~'; ++code) {
+            bind(context, code, MDFR_NONE, vim_handle_key);
+            bind(context, code, MDFR_CTRL, vim_handle_key);
+        }
     }
     end_map(context);
 

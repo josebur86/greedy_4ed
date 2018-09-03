@@ -2,32 +2,6 @@
 
 #define max(a, b) ((a)>(b)) ? a : b
 
-START_HOOK_SIG(greedy_start)
-{
-    default_start(app, files, file_count, flags, flag_count);
-
-    //set_fullscreen(app, true);
-
-    Theme_Color colors[] = {
-        {Stag_Back, 0xFF002B36},
-        {Stag_Bar, 0xFF839496},
-        {Stag_Comment, 0xFF586E75},
-        {Stag_Keyword, 0xFF519E18},
-        {Stag_Preproc, 0xFFCB4B1B},
-        {Stag_Include, 0xFFCB4B1B},
-        {Stag_Highlight, 0xFFB58900},
-        {Stag_Margin_Active, 0xFF719E07},
-    };
-    set_theme_colors(app, colors, ArrayCount(colors));
-
-    set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
-
-    global_normal_mode = true;
-    sync_to_mode(app);
-
-    return 0;
-}
-
 //
 // VIM Start
 //
@@ -57,6 +31,7 @@ START_HOOK_SIG(greedy_start)
  *  - show line numbers? (Not sure if 4coder supports this yet)
  *  - Animated scrolling @Fun
  *  - Hide the mouse cursor unless it moves.
+ *  - Shift-j collapse lines
  */
 
 enum CommandMode
@@ -66,24 +41,38 @@ enum CommandMode
     Y_COMMANDS,
 };
 
+enum RegisterType
+{
+    UNKNOWN = 0,
+    PARTIAL_LINE,
+    WHOLE_LINE,
+    MULTIPLE_LINES,
+};
+
 struct Register
 {
+    RegisterType type;
+
     char *content;
     uint32_t size;
+    uint32_t max_size;
 };
 static void register_ensure_storage_for_size(Register *r, uint32_t size)
 {
-    if (r->size < size) {
-        uint32_t requested_size = max(r->size, 1024);
+    if (r->max_size < size) {
+        uint32_t requested_size = max(r->max_size, 1024);
         r->content = (char *)realloc(r->content, requested_size);
-        r->size = requested_size;
+        r->max_size = requested_size;
+        r->size = 0;
     }
 }
+#define register_to_string(r) make_string(r.content, r.size)
 
 static bool global_normal_mode = true;
 static CommandMode global_command_mode = NONE;
-
-static Register global_yank_register = {0};
+static Register global_yank_register = {
+    UNKNOWN, 0, 0, 0
+};
 
 // Helpers
 static void sync_to_mode(Application_Links *app)
@@ -123,10 +112,7 @@ static void enter_none_command_mode()
     global_command_mode = NONE;
 }
 
-
-//
 // Mode Switching
-//
 
 // TODO(joe): Should these be commands or just functions that are called?
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
@@ -166,14 +152,16 @@ CUSTOM_COMMAND_SIG(handle_y_key)
         View_Summary view = get_active_view(app, access);
         Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
         int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
-        int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line) + 1;
+        int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
 
         uint32_t size = end-start;
         register_ensure_storage_for_size(&global_yank_register, size);
         bool32 success = buffer_read_range(app, &buffer, start, end, global_yank_register.content);
+        global_yank_register.size = size;
+        global_yank_register.type = WHOLE_LINE;
+
         if (success) {
             // TODO(joe): Should I add an string terminator?
-            print_message(app, global_yank_register.content, size);
         }
 
         enter_none_command_mode();
@@ -183,13 +171,13 @@ CUSTOM_COMMAND_SIG(handle_y_key)
 //
 // Editing
 //
-CUSTOM_COMMAND_SIG(vim_append)
+static void vim_append(Application_Links *app)
 {
     exec_command(app, switch_to_insert_mode);
     // TODO(joe): Position the cursor correctly.
 }
 
-CUSTOM_COMMAND_SIG(vim_newline_below_then_insert)
+static void vim_newline_below_then_insert(Application_Links *app)
 {
     exec_command(app, seek_end_of_line);
     write_string(app, make_lit_string("\n"));
@@ -197,7 +185,7 @@ CUSTOM_COMMAND_SIG(vim_newline_below_then_insert)
     exec_command(app, switch_to_insert_mode);
 }
 
-CUSTOM_COMMAND_SIG(vim_newline_above_then_insert)
+static void vim_newline_above_then_insert(Application_Links *app)
 {
     exec_command(app, seek_beginning_of_line);
     write_string(app, make_lit_string("\n"));
@@ -206,10 +194,25 @@ CUSTOM_COMMAND_SIG(vim_newline_above_then_insert)
     exec_command(app, switch_to_insert_mode);
 }
 
+static void vim_paste_after(Application_Links *app)
+{
+    if (global_yank_register.size == 0) return;
+
+    // TODO(joe): Cursor placement:
+    //  - has_newline == true  -> first character
+    //  - has_newline == false -> last character
+    if (global_yank_register.type == WHOLE_LINE) {
+        exec_command(app, seek_end_of_line);
+        write_string(app, make_lit_string("\n"));
+    }
+
+    write_string(app, register_to_string(global_yank_register));
+}
+
 //
 // Moving
 //
-CUSTOM_COMMAND_SIG(vim_move_up)
+static void vim_move_up(Application_Links *app)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
@@ -222,7 +225,7 @@ CUSTOM_COMMAND_SIG(vim_move_up)
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_move_down)
+static void vim_move_down(Application_Links *app)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
@@ -247,35 +250,35 @@ static bool at_line_boundary(Application_Links *app, bool moving_left)
 }
 
 
-CUSTOM_COMMAND_SIG(vim_move_left)
+static void vim_move_left(Application_Links *app)
 {
     if (!at_line_boundary(app, true)) {
         exec_command(app, move_left);
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_move_right)
+static void vim_move_right(Application_Links *app)
 {
     if (!at_line_boundary(app, false)) {
         exec_command(app, move_right);
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_seek_white_or_token_left)
+static void vim_seek_white_or_token_left(Application_Links *app)
 {
     if (!at_line_boundary(app, true)) {
         exec_command(app, seek_white_or_token_left);
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_seek_white_or_token_right)
+static void vim_seek_white_or_token_right(Application_Links *app)
 {
     if (!at_line_boundary(app, false)) {
         exec_command(app, seek_white_or_token_right);
     }
 }
 
-CUSTOM_COMMAND_SIG(vim_seek_to_file_end)
+static void vim_seek_to_file_end(Application_Links *app)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
@@ -283,7 +286,7 @@ CUSTOM_COMMAND_SIG(vim_seek_to_file_end)
     view_set_cursor(app, &view, seek, true);
 }
 
-CUSTOM_COMMAND_SIG(vim_ex_command)
+static void vim_ex_command(Application_Links *app)
 {
     char command[1024];
 
@@ -317,29 +320,30 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
         {
             // TODO(joe): w and e aren't properly emulated with seek_token_right.
             // Might need to use the streaming interface to determine words, characters, etc
-            case 'a': exec_command(app, vim_append); break;
-            case 'b': exec_command(app, vim_seek_white_or_token_left); break;
-            case 'e': exec_command(app, vim_seek_white_or_token_right); break;
-            case 'g': exec_command(app, handle_g_key); break;
-            case 'h': exec_command(app, vim_move_left); break;
-            case 'i': exec_command(app, switch_to_insert_mode); break;
-            case 'j': exec_command(app, vim_move_down); break;
-            case 'k': exec_command(app, vim_move_up); break;
-            case 'l': exec_command(app, vim_move_right); break;
-            case 'o': exec_command(app, vim_newline_below_then_insert); break;
+            case 'a': vim_append(app); break;
+            case 'b': vim_seek_white_or_token_left(app); break;
+            case 'e': vim_seek_white_or_token_right(app); break;
+            case 'g': handle_g_key(app); break;
+            case 'h': vim_move_left(app); break;
+            case 'i': switch_to_insert_mode(app); break;
+            case 'j': vim_move_down(app); break;
+            case 'k': vim_move_up(app); break;
+            case 'l': vim_move_right(app); break;
+            case 'o': vim_newline_below_then_insert(app); break;
+            case 'p': vim_paste_after(app); break;
             case 'u': exec_command(app, undo); break;
-            case 'w': exec_command(app, vim_seek_white_or_token_right); break;
+            case 'w': vim_seek_white_or_token_right(app); break;
             case 'x': exec_command(app, delete_char); break;
-            case 'y': exec_command(app, handle_y_key); break;
+            case 'y': handle_y_key(app); break;
 
-            case 'G': exec_command(app, vim_seek_to_file_end); break;
-            case 'O': exec_command(app, vim_newline_above_then_insert); break;
+            case 'G': vim_seek_to_file_end(app); break;
+            case 'O': vim_newline_above_then_insert(app); break;
 
-            case key_back: exec_command(app, vim_move_left); break;
+            case key_back: vim_move_left(app); break;
             case '$': exec_command(app, seek_end_of_line); break;
             case '^': exec_command(app, seek_beginning_of_line); break;
-            case ':': exec_command(app, vim_ex_command); break;
-            case '/': exec_command(app, search_identifier); break;
+            case ':': vim_ex_command(app); break;
+            case '/': exec_command(app, search); break;
         }
     }
     else if (modifier == MDFR_CTRL)
@@ -347,12 +351,13 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
         switch(code)
         {
             case 'b': exec_command(app, page_up); break;
+            case 'f': exec_command(app, page_down); break;
             case 'h': exec_command(app, change_active_panel_backwards); break;
             case 'j': exec_command(app, change_active_panel); break;
             case 'k': exec_command(app, change_active_panel_backwards); break;
             case 'l': exec_command(app, change_active_panel); break;
-            case 'f': exec_command(app, page_down); break;
             case 'r': exec_command(app, redo); break;
+            case 'p': exec_command(app, interactive_open_or_new); break;
         }
     }
 }
@@ -391,6 +396,36 @@ CUSTOM_COMMAND_SIG(vim_handle_key)
 //
 //
 
+START_HOOK_SIG(greedy_start)
+{
+    default_start(app, files, file_count, flags, flag_count);
+
+    //set_fullscreen(app, true);
+
+    Theme_Color colors[] = {
+        {Stag_Back, 0xFF002B36},
+        {Stag_Bar, 0xFF839496},
+        {Stag_Comment, 0xFF586E75},
+        {Stag_Keyword, 0xFF519E18},
+        {Stag_Preproc, 0xFFCB4B1B},
+        {Stag_Include, 0xFFCB4B1B},
+        {Stag_Highlight, 0xFFB58900},
+        {Stag_Margin_Active, 0xFF719E07},
+    };
+    set_theme_colors(app, colors, ArrayCount(colors));
+
+    set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
+
+    global_normal_mode = true;
+    sync_to_mode(app);
+
+    return 0;
+}
+
+//
+//
+//
+
 extern "C" GET_BINDING_DATA(get_bindings)
 {
     Bind_Helper context_actual = begin_bind_helper(data, size);
@@ -401,13 +436,6 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_open_file_hook(context, default_file_settings);
     //set_scroll_rule(context, casey_smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
-
-    begin_map(context, mapid_global);
-    {
-        // Ctrl-P style file handling
-        bind(context, 'p', MDFR_CTRL, interactive_open_or_new);
-    }
-    end_map(context);
 
     // TODO(joe): Is it possibel to define my own mapid? Why should I?
     begin_map(context, mapid_file);

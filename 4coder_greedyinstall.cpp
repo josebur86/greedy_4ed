@@ -1,13 +1,32 @@
 #include "4coder_default_include.cpp"
 
+#define max(a, b) ((a)>(b)) ? a : b
+
 enum CommandMode
 {
     NONE = 0,
     G_COMMANDS,
+    Y_COMMANDS,
 };
+
+struct Register
+{
+    char *content;
+    uint32_t size;
+};
+static void register_ensure_storage_for_size(Register *r, uint32_t size)
+{
+    if (r->size < size) {
+        uint32_t requested_size = max(r->size, 1024);
+        r->content = (char *)realloc(r->content, requested_size);
+        r->size = requested_size;
+    }
+}
 
 static bool global_normal_mode = true;
 static CommandMode global_command_mode = NONE;
+
+static Register global_yank_register = {0};
 
 /* NOTE(joe): Available command maps
  * mapid_global
@@ -31,7 +50,7 @@ static CommandMode global_command_mode = NONE;
  *  - Registers
  *  - Mouse integration
  *  - search
- *  - visual mode
+ *  - visual mode (view_set_highlight)
  *  - visual block mode
  *  - . "dot" support
  *  - Completion
@@ -82,7 +101,12 @@ static void enter_g_command_mode()
     global_command_mode = G_COMMANDS;
 }
 
-static void exit_g_command_mode()
+static void enter_y_command_mode()
+{
+    global_command_mode = Y_COMMANDS;
+}
+
+static void enter_none_command_mode()
 {
     global_command_mode = NONE;
 }
@@ -145,7 +169,31 @@ CUSTOM_COMMAND_SIG(handle_g_key)
         Buffer_Seek seek = seek_pos(0);
         view_set_cursor(app, &view, seek, true);
 
-        exit_g_command_mode();
+        enter_none_command_mode();
+    }
+}
+
+CUSTOM_COMMAND_SIG(handle_y_key)
+{
+    if (global_command_mode == NONE) {
+        enter_y_command_mode();
+    } else if (global_command_mode == Y_COMMANDS) {
+        // Put the current line into the yank register
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+        int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
+        int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line) + 1;
+
+        uint32_t size = end-start;
+        register_ensure_storage_for_size(&global_yank_register, size);
+        bool32 success = buffer_read_range(app, &buffer, start, end, global_yank_register.content);
+        if (success) {
+            // TODO(joe): Should I add an string terminator?
+            print_message(app, global_yank_register.content, size);
+        }
+
+        enter_none_command_mode();
     }
 }
 
@@ -299,6 +347,7 @@ void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_F
             case 'u': exec_command(app, undo); break;
             case 'w': exec_command(app, vim_seek_white_or_token_right); break;
             case 'x': exec_command(app, delete_char); break;
+            case 'y': exec_command(app, handle_y_key); break;
 
             case 'G': exec_command(app, vim_seek_to_file_end); break;
             case 'O': exec_command(app, vim_newline_above_then_insert); break;
@@ -341,6 +390,8 @@ void vim_handle_key(Application_Links *app, Key_Code code, Key_Modifier_Flag mod
     }
 }
 
+// TODO(joe): I think this can be cleaned up to just one CUSTOM_COMMAND_SIG by
+// getting the User_Input struct via get_command_input(). @Refactor
 CUSTOM_COMMAND_SIG(vim_a) { vim_handle_key(app, 'a', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_b) { vim_handle_key(app, 'b', MDFR_NONE); }
 CUSTOM_COMMAND_SIG(vim_c) { vim_handle_key(app, 'c', MDFR_NONE); }

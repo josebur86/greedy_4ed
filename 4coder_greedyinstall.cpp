@@ -75,11 +75,12 @@ static void register_ensure_storage_for_size(Register *r, uint32_t size)
 }
 #define register_to_string(r) make_string(r.content, r.size)
 
-static bool global_mode = NORMAL;
+static VimMode global_mode = NORMAL;
 static CommandMode global_command_mode = NONE;
 static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
+static Range global_highlight = {0};
 
 // Helpers
 static void sync_to_mode(Application_Links *app)
@@ -102,6 +103,13 @@ static void sync_to_mode(Application_Links *app)
     } else if (global_mode == INSERT) {
         set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
     }
+}
+
+static void sync_highlight(Application_Links *app, bool turn_on)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    view_set_highlight(app, &view, global_highlight.start, global_highlight.end, turn_on);
 }
 
 static void enter_g_command_mode()
@@ -132,6 +140,25 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
 {
     global_mode = NORMAL;
     sync_to_mode(app);
+    sync_highlight(app, false);
+}
+
+CUSTOM_COMMAND_SIG(toggle_visual_mode)
+{
+    global_mode = (global_mode == VISUAL) ? NORMAL : VISUAL;
+    sync_to_mode(app);
+
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    bool turn_on = false;
+    if (global_mode == VISUAL) {
+        global_highlight.start = view.cursor.pos;
+        global_highlight.end = view.cursor.pos+1;
+        turn_on = true;
+    }
+
+    sync_highlight(app, turn_on);
 }
 
 CUSTOM_COMMAND_SIG(handle_g_key)
@@ -341,6 +368,16 @@ static void vim_move_left(Application_Links *app)
 {
     if (!at_line_boundary(app, true)) {
         exec_command(app, move_left);
+
+        if (global_mode == VISUAL) {
+            uint32_t access = AccessProtected;
+            View_Summary view = get_active_view(app, access);
+            if (view.cursor.pos < global_highlight.start) {
+                global_highlight.start = view.cursor.pos;
+            }
+
+            sync_highlight(app, true);
+        }
     }
 }
 
@@ -419,6 +456,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             case 'o': vim_newline_below_then_insert(app); break;
             case 'p': vim_paste_after(app); break;
             case 'u': exec_command(app, undo); break;
+            case 'v': exec_command(app, toggle_visual_mode); break;
             case 'w': vim_seek_white_or_token_right(app); break;
             case 'x': exec_command(app, delete_char); break;
             case 'y': handle_y_key(app); break;
@@ -428,6 +466,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             case 'P': vim_paste_before(app); break;
 
             case key_back: vim_move_left(app); break;
+            case key_esc: exec_command(app, switch_to_normal_mode); break;
             case '$': exec_command(app, seek_end_of_line); break;
             case '^': exec_command(app, seek_beginning_of_line); break;
             case ':': vim_ex_command(app); break;
@@ -498,6 +537,7 @@ START_HOOK_SIG(greedy_start)
         {Stag_Preproc, 0xFFCB4B1B},
         {Stag_Include, 0xFFCB4B1B},
         {Stag_Highlight, 0xFFB58900},
+        {Stag_At_Highlight, 0xFF000000},
         {Stag_Margin_Active, 0xFF719E07},
     };
     set_theme_colors(app, colors, ArrayCount(colors));

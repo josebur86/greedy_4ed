@@ -434,6 +434,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_start_hook(context, greedy_start);
     set_command_caller(context, default_command_caller);
     set_open_file_hook(context, default_file_settings);
+    set_scroll_rule(context, smooth_scroll_rule);
     //set_scroll_rule(context, casey_smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
 

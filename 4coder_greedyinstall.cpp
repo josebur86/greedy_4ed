@@ -1,5 +1,7 @@
 #include "4coder_default_include.cpp"
 
+#include <assert.h>
+
 #define max(a, b) ((a)>(b)) ? a : b
 
 //
@@ -109,7 +111,7 @@ static void sync_highlight(Application_Links *app, bool turn_on)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
-    view_set_highlight(app, &view, global_highlight.start, global_highlight.end, turn_on);
+    view_set_highlight(app, &view, global_highlight.start, global_highlight.end+1, turn_on);
 }
 
 static void enter_g_command_mode()
@@ -154,7 +156,7 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
     bool turn_on = false;
     if (global_mode == VISUAL) {
         global_highlight.start = view.cursor.pos;
-        global_highlight.end = view.cursor.pos+1;
+        global_highlight.end = view.cursor.pos;
         turn_on = true;
     }
 
@@ -367,13 +369,27 @@ static bool at_line_boundary(Application_Links *app, bool moving_left)
 static void vim_move_left(Application_Links *app)
 {
     if (!at_line_boundary(app, true)) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        int32_t oldPos = view.cursor.pos;
+
         exec_command(app, move_left);
 
+        // TODO(joe): IDK if this is the best way to grab the updated cursor.
+        view = get_active_view(app, access);
+
         if (global_mode == VISUAL) {
-            uint32_t access = AccessProtected;
-            View_Summary view = get_active_view(app, access);
-            if (view.cursor.pos < global_highlight.start) {
+            if (oldPos == global_highlight.start) {
                 global_highlight.start = view.cursor.pos;
+            } else if (oldPos == global_highlight.end) {
+                global_highlight.end = view.cursor.pos;
+                if (global_highlight.end < global_highlight.start) {
+                    int32_t temp = global_highlight.start;
+                    global_highlight.end = global_highlight.start;
+                    global_highlight.start = temp;
+                }
+            } else {
+                assert(!"Unexpected cursor position");
             }
 
             sync_highlight(app, true);
@@ -384,7 +400,34 @@ static void vim_move_left(Application_Links *app)
 static void vim_move_right(Application_Links *app)
 {
     if (!at_line_boundary(app, false)) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        int32_t oldPos = view.cursor.pos;
+
         exec_command(app, move_right);
+
+        // TODO(joe): IDK if this is the best way to grab the updated cursor.
+        view = get_active_view(app, access);
+
+        if (global_mode == VISUAL) {
+            // TODO(joe): The cursor position will be reported as the left most highlight positions
+            // so we can't rely on it being updated when we move right like we can when we move
+            // left. The code below is _not_ right.
+            if (oldPos == global_highlight.end) {
+                global_highlight.end = view.cursor.pos;
+            } else if (oldPos == global_highlight.start) {
+                global_highlight.start = view.cursor.pos;
+                if (global_highlight.end < global_highlight.start) {
+                    int32_t temp = global_highlight.start;
+                    global_highlight.end = global_highlight.start;
+                    global_highlight.start = temp;
+                }
+            } else {
+                assert(!"Unexpected cursor position");
+            }
+
+            sync_highlight(app, true);
+        }
     }
 }
 

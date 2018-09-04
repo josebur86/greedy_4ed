@@ -7,7 +7,6 @@
 //
 
 /* TODO(joe): VIM TODO
- *  - p P
  *  - y
  *  - Movement Chord support (d, r, c)
  *  - Registers
@@ -33,6 +32,14 @@
  *  - Shift-j collapse lines
  *  - zz to move current line to the center of the view.
  */
+
+enum VimMode
+{
+    NORMAL = 0,
+    INSERT,
+    VISUAL,
+    VISUAL_BLOCK,
+};
 
 enum CommandMode
 {
@@ -68,7 +75,7 @@ static void register_ensure_storage_for_size(Register *r, uint32_t size)
 }
 #define register_to_string(r) make_string(r.content, r.size)
 
-static bool global_normal_mode = true;
+static bool global_mode = NORMAL;
 static CommandMode global_command_mode = NONE;
 static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
@@ -90,9 +97,9 @@ static void sync_to_mode(Application_Links *app)
         {Stag_Margin_Active, insert},
     };
 
-    if (global_normal_mode) {
+    if (global_mode == NORMAL) {
         set_theme_colors(app, normal_mode_colors, ArrayCount(normal_mode_colors));
-    } else {
+    } else if (global_mode == INSERT) {
         set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
     }
 }
@@ -117,13 +124,13 @@ static void enter_none_command_mode()
 // TODO(joe): Should these be commands or just functions that are called?
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 {
-    global_normal_mode = false;
+    global_mode = INSERT;
     sync_to_mode(app);
 }
 
 CUSTOM_COMMAND_SIG(switch_to_normal_mode)
 {
-    global_normal_mode = true;
+    global_mode = NORMAL;
     sync_to_mode(app);
 }
 
@@ -194,6 +201,58 @@ static void vim_newline_above_then_insert(Application_Links *app)
     exec_command(app, switch_to_insert_mode);
 }
 
+static void vim_paste_before(Application_Links *app)
+{
+    Register *r = &global_yank_register;
+    if (r->size == 0) return;
+
+    uint32_t access = AccessOpen;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    Partition *part = &global_part;
+    Temp_Memory temp = begin_temp_memory(part);
+
+    if (r->type == WHOLE_LINE) {
+        // NOTE(joe): If the register is a whole line, then we will paste it on the previous line
+        // regardless of where the cursor currently is. After pasting, the cursor will be at the
+        // beginning of the pasted line.
+        uint32_t edit_len = r->size+1;
+        char *edit_str = push_array(part, char, edit_len);
+        copy_fast_unsafe(edit_str, r->content);
+        edit_str[edit_len-1] = '\n';
+
+        int32_t insert_pos = buffer_get_line_start(app, &buffer, view.cursor.line);
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_pos(insert_pos);
+        view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos, insert_pos + edit_len, paste.color);
+    } else if (r->type == PARTIAL_LINE) {
+        // NOTE(joe): A partial line register will paste its contents where the cursor is. After the
+        // paste, the cursor will be at the end of the pasted register contents.
+        // TODO(joe): Implement!
+    } else if (r->type == MULTIPLE_LINES) {
+        // NOTE(joe): A partial line register will paste its contents where the cursor is. After the
+        // paste, the cursor will be at the beginning of the pasted register contents.
+        // TODO(joe): Implement!
+    }
+
+
+    end_temp_memory(temp);
+}
+
 static void vim_paste_after(Application_Links *app)
 {
     Register *r = &global_yank_register;
@@ -227,6 +286,11 @@ static void vim_paste_after(Application_Links *app)
 
         Buffer_Seek seek = seek_line_char(view.cursor.line+1, 0);
         view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos + 1, insert_pos + 1 + edit_len, paste.color);
     }
 
     end_temp_memory(temp);
@@ -361,6 +425,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
 
             case 'G': vim_seek_to_file_end(app); break;
             case 'O': vim_newline_above_then_insert(app); break;
+            case 'P': vim_paste_before(app); break;
 
             case key_back: vim_move_left(app); break;
             case '$': exec_command(app, seek_end_of_line); break;
@@ -407,7 +472,7 @@ CUSTOM_COMMAND_SIG(vim_handle_key)
         if (input.key.modifiers[MDFR_ALT_INDEX])     { modifier |= MDFR_ALT; }
         if (input.key.modifiers[MDFR_COMMAND_INDEX]) { modifier |= MDFR_CMND; }
 
-        if (global_normal_mode) {
+        if (global_mode != INSERT) {
             vim_handle_key_normal(app, input.key.keycode, modifier);
         } else {
             vim_handle_key_insert(app, input.key.keycode, modifier);
@@ -439,7 +504,7 @@ START_HOOK_SIG(greedy_start)
 
     set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
 
-    global_normal_mode = true;
+    global_mode = NORMAL;
     sync_to_mode(app);
 
     return 0;
@@ -458,8 +523,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_command_caller(context, default_command_caller);
     set_open_file_hook(context, default_file_settings);
     set_scroll_rule(context, smooth_scroll_rule);
-    //set_scroll_rule(context, casey_smooth_scroll_rule);
-    set_end_file_hook(context, default_end_file);
+     set_end_file_hook(context, default_end_file);
 
     // TODO(joe): Is it possibel to define my own mapid? Why should I?
     begin_map(context, mapid_file);

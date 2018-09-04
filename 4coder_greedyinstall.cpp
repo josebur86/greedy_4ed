@@ -29,9 +29,9 @@
  *  - find corresponding file and display in other panel (h <-> cpp)
  *  - Macro support
  *  - show line numbers? (Not sure if 4coder supports this yet)
- *  - Animated scrolling @Fun
  *  - Hide the mouse cursor unless it moves.
  *  - Shift-j collapse lines
+ *  - zz to move current line to the center of the view.
  */
 
 enum CommandMode
@@ -196,17 +196,40 @@ static void vim_newline_above_then_insert(Application_Links *app)
 
 static void vim_paste_after(Application_Links *app)
 {
-    if (global_yank_register.size == 0) return;
+    Register *r = &global_yank_register;
+    if (r->size == 0) return;
 
-    // TODO(joe): Cursor placement:
-    //  - has_newline == true  -> first character
-    //  - has_newline == false -> last character
-    if (global_yank_register.type == WHOLE_LINE) {
-        exec_command(app, seek_end_of_line);
-        write_string(app, make_lit_string("\n"));
+    uint32_t access = AccessOpen;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    Partition *part = &global_part;
+    Temp_Memory temp = begin_temp_memory(part);
+
+    if (r->type == WHOLE_LINE) {
+        // NOTE(joe): If the register is a whole line, then we will paste it on the next line
+        // regardless of where the cursor currently is. After pasting, the cursor will be at the
+        // beginning of the pasted line.
+        uint32_t edit_len = r->size+1;
+        char *edit_str = push_array(part, char, edit_len);
+        edit_str[0] = '\n';
+        copy_fast_unsafe(edit_str+1, r->content);
+
+        int32_t insert_pos = buffer_get_line_end(app, &buffer, view.cursor.line);
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_line_char(view.cursor.line+1, 0);
+        view_set_cursor(app, &view, seek, true);
     }
 
-    write_string(app, register_to_string(global_yank_register));
+    end_temp_memory(temp);
 }
 
 //

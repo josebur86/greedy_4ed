@@ -10,11 +10,11 @@
 
 /* TODO(joe): VIM TODO
  *  - y
+ *  - visual mode (view_set_highlight)
  *  - Movement Chord support (d, r, c)
  *  - Registers
  *  - Mouse integration
  *  - search
- *  - visual mode (view_set_highlight)
  *  - visual block mode
  *  - . "dot" support
  *  - Completion
@@ -646,7 +646,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_command_caller(context, default_command_caller);
     set_open_file_hook(context, default_file_settings);
     set_scroll_rule(context, smooth_scroll_rule);
-     set_end_file_hook(context, default_end_file);
+    set_end_file_hook(context, default_end_file);
 
     // TODO(joe): Is it possibel to define my own mapid? Why should I?
     begin_map(context, mapid_file);

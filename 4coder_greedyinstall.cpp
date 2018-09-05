@@ -82,7 +82,8 @@ static CommandMode global_command_mode = NONE;
 static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
-static Range global_highlight = {0};
+static Range global_sel_range = {0};
+static Full_Cursor global_sel_cursor = {0};
 
 // Helpers
 static void sync_to_mode(Application_Links *app)
@@ -111,7 +112,10 @@ static void sync_highlight(Application_Links *app, bool turn_on)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
-    view_set_highlight(app, &view, global_highlight.start, global_highlight.end+1, turn_on);
+    view_set_highlight(app, &view, global_sel_range.start, global_sel_range.end+1, turn_on);
+    if (!turn_on) {
+        view_set_cursor(app, &view, seek_pos(global_sel_cursor.pos), true);
+    }
 }
 
 static void enter_g_command_mode()
@@ -140,9 +144,13 @@ CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 
 CUSTOM_COMMAND_SIG(switch_to_normal_mode)
 {
+    VimMode prev_mode = global_mode;
     global_mode = NORMAL;
     sync_to_mode(app);
-    sync_highlight(app, false);
+
+    if (prev_mode == VISUAL) {
+        sync_highlight(app, false);
+    }
 }
 
 CUSTOM_COMMAND_SIG(toggle_visual_mode)
@@ -153,14 +161,14 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
 
-    bool turn_on = false;
     if (global_mode == VISUAL) {
-        global_highlight.start = view.cursor.pos;
-        global_highlight.end = view.cursor.pos;
-        turn_on = true;
+        global_sel_range.start = view.cursor.pos;
+        global_sel_range.end = view.cursor.pos;
+        global_sel_cursor = view.cursor;
+        sync_highlight(app, true);
+    } else if (global_mode == NORMAL) {
+        sync_highlight(app, false);
     }
-
-    sync_highlight(app, turn_on);
 }
 
 CUSTOM_COMMAND_SIG(handle_g_key)
@@ -371,22 +379,21 @@ static void vim_move_left(Application_Links *app)
     if (!at_line_boundary(app, true)) {
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
-        int32_t oldPos = view.cursor.pos;
+
+        int32_t oldPos = global_sel_cursor.pos;
 
         exec_command(app, move_left);
 
-        // TODO(joe): IDK if this is the best way to grab the updated cursor.
-        view = get_active_view(app, access);
-
         if (global_mode == VISUAL) {
-            if (oldPos == global_highlight.start) {
-                global_highlight.start = view.cursor.pos;
-            } else if (oldPos == global_highlight.end) {
-                global_highlight.end = view.cursor.pos;
-                if (global_highlight.end < global_highlight.start) {
-                    int32_t temp = global_highlight.start;
-                    global_highlight.end = global_highlight.start;
-                    global_highlight.start = temp;
+            view_compute_cursor(app, &view, seek_pos(oldPos-1), &global_sel_cursor);
+            if (oldPos == global_sel_range.start) {
+                global_sel_range.start = global_sel_cursor.pos;
+            } else if (oldPos == global_sel_range.end) {
+                global_sel_range.end = global_sel_cursor.pos;
+                if (global_sel_range.end < global_sel_range.start) {
+                    int32_t temp = global_sel_range.start;
+                    global_sel_range.end = global_sel_range.start;
+                    global_sel_range.start = temp;
                 }
             } else {
                 assert(!"Unexpected cursor position");
@@ -402,25 +409,21 @@ static void vim_move_right(Application_Links *app)
     if (!at_line_boundary(app, false)) {
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
-        int32_t oldPos = view.cursor.pos;
+
+        int32_t oldPos = global_sel_cursor.pos;
 
         exec_command(app, move_right);
 
-        // TODO(joe): IDK if this is the best way to grab the updated cursor.
-        view = get_active_view(app, access);
-
         if (global_mode == VISUAL) {
-            // TODO(joe): The cursor position will be reported as the left most highlight positions
-            // so we can't rely on it being updated when we move right like we can when we move
-            // left. The code below is _not_ right.
-            if (oldPos == global_highlight.end) {
-                global_highlight.end = view.cursor.pos;
-            } else if (oldPos == global_highlight.start) {
-                global_highlight.start = view.cursor.pos;
-                if (global_highlight.end < global_highlight.start) {
-                    int32_t temp = global_highlight.start;
-                    global_highlight.end = global_highlight.start;
-                    global_highlight.start = temp;
+            view_compute_cursor(app, &view, seek_pos(oldPos+1), &global_sel_cursor);
+            if (oldPos == global_sel_range.end) {
+                global_sel_range.end = global_sel_cursor.pos;
+            } else if (oldPos == global_sel_range.start) {
+                global_sel_range.start = global_sel_cursor.pos;
+                if (global_sel_range.end < global_sel_range.start) {
+                    int32_t temp = global_sel_range.start;
+                    global_sel_range.end = global_sel_range.start;
+                    global_sel_range.start = temp;
                 }
             } else {
                 assert(!"Unexpected cursor position");

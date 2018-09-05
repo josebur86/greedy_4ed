@@ -9,7 +9,8 @@
 //
 
 /* TODO(joe): VIM TODO
- *  - y
+*  - Ability to paste from the clipboard
+*  - y
  *  - visual mode (view_set_highlight)
  *  - Movement Chord support (d, r, c)
  *  - Registers

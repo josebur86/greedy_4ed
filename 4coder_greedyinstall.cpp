@@ -480,6 +480,15 @@ static void vim_seek_white_or_token_left(Application_Links *app)
 
 static void vim_seek_white_or_token_right(Application_Links *app)
 {
+    // TODO(joe): 'w' -> look for whitespace or a line break, and position the cursor on the next
+    //            character that exist after it. If it's a code file, just position it at the beginning of the
+    //            next token.
+    //
+    //            'b' -> same as 'w' only go backwards in the stream.
+    //
+    //            'e' -> look for whitespace or a line break, and position the cursor on the
+    //            character exist just before it. If it's a code file, just position it at the end
+    //            of the current token or the end of the next token.
     if (!at_line_boundary(app, false)) {
         exec_command(app, seek_white_or_token_right);
     }

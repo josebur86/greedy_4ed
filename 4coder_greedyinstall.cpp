@@ -346,6 +346,25 @@ static void vim_move_up(Application_Links *app)
     if (line > 1)
     {
         exec_command(app, move_up);
+
+        if (global_mode == VISUAL) {
+            int32_t old_pos = global_sel_cursor.pos;
+            view_compute_cursor(app, &view, seek_line_char(global_sel_cursor.line-1, global_sel_cursor.character), &global_sel_cursor);
+            if (old_pos == global_sel_range.start) {
+                global_sel_range.start = global_sel_cursor.pos;
+            } else if (old_pos == global_sel_range.end) {
+                global_sel_range.end = global_sel_cursor.pos;
+                if (global_sel_range.end < global_sel_range.start) {
+                    int32_t temp = global_sel_range.start;
+                    global_sel_range.end = global_sel_range.start;
+                    global_sel_range.start = temp;
+                }
+            } else {
+                assert(!"Unexpected cursor position");
+            }
+
+            sync_highlight(app, true);
+        }
     }
 }
 
@@ -359,6 +378,25 @@ static void vim_move_down(Application_Links *app)
     if (line < buffer.line_count)
     {
         exec_command(app, move_down);
+
+        if (global_mode == VISUAL) {
+            int32_t old_pos = global_sel_cursor.pos;
+            view_compute_cursor(app, &view, seek_line_char(global_sel_cursor.line+1, global_sel_cursor.character), &global_sel_cursor);
+            if (old_pos == global_sel_range.end) {
+                global_sel_range.end = global_sel_cursor.pos;
+            } else if (old_pos == global_sel_range.start) {
+                global_sel_range.start = global_sel_cursor.pos;
+                if (global_sel_range.end < global_sel_range.start) {
+                    int32_t temp = global_sel_range.start;
+                    global_sel_range.end = global_sel_range.start;
+                    global_sel_range.start = temp;
+                }
+            } else {
+                assert(!"Unexpected cursor position");
+            }
+
+            sync_highlight(app, true);
+        }
     }
 }
 
@@ -380,15 +418,15 @@ static void vim_move_left(Application_Links *app)
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
 
-        int32_t oldPos = global_sel_cursor.pos;
 
         exec_command(app, move_left);
 
         if (global_mode == VISUAL) {
-            view_compute_cursor(app, &view, seek_pos(oldPos-1), &global_sel_cursor);
-            if (oldPos == global_sel_range.start) {
+            int32_t old_pos = global_sel_cursor.pos;
+            view_compute_cursor(app, &view, seek_pos(old_pos-1), &global_sel_cursor);
+            if (old_pos == global_sel_range.start) {
                 global_sel_range.start = global_sel_cursor.pos;
-            } else if (oldPos == global_sel_range.end) {
+            } else if (old_pos == global_sel_range.end) {
                 global_sel_range.end = global_sel_cursor.pos;
                 if (global_sel_range.end < global_sel_range.start) {
                     int32_t temp = global_sel_range.start;
@@ -410,15 +448,14 @@ static void vim_move_right(Application_Links *app)
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
 
-        int32_t oldPos = global_sel_cursor.pos;
-
         exec_command(app, move_right);
 
         if (global_mode == VISUAL) {
-            view_compute_cursor(app, &view, seek_pos(oldPos+1), &global_sel_cursor);
-            if (oldPos == global_sel_range.end) {
+            int32_t old_pos = global_sel_cursor.pos;
+            view_compute_cursor(app, &view, seek_pos(old_pos+1), &global_sel_cursor);
+            if (old_pos == global_sel_range.end) {
                 global_sel_range.end = global_sel_cursor.pos;
-            } else if (oldPos == global_sel_range.start) {
+            } else if (old_pos == global_sel_range.start) {
                 global_sel_range.start = global_sel_cursor.pos;
                 if (global_sel_range.end < global_sel_range.start) {
                     int32_t temp = global_sel_range.start;

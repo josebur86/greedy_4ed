@@ -9,9 +9,9 @@
 //
 
 /* TODO(joe): VIM TODO
-*  - Ability to paste from the clipboard
-*  - y
+ *  - y
  *  - visual mode (view_set_highlight)
+ *  - indenting (=)
  *  - Movement Chord support (d, r, c)
  *  - Registers
  *  - Mouse integration
@@ -668,6 +668,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
         //
         bind(context, key_f4, MDFR_ALT, exit_4coder);
         bind(context, '\n', MDFR_ALT, toggle_fullscreen);
+        bind(context, key_insert, MDFR_SHIFT, paste_and_indent);
 
         //
         // VIM

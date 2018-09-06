@@ -481,6 +481,22 @@ static void vim_seek_white_or_token_left(Application_Links *app)
 
 static void vim_seek_white_or_token_right(Application_Links *app)
 {
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    if (buffer.is_lexed){
+        Cpp_Token tokens[2];
+        Cpp_Token_Array array = {0};
+        array.count = 2;
+        array.max_count = 2;
+        array.tokens = tokens;
+        bool32 tokens_read = buffer_read_tokens(app, &buffer, 0, array.count, array.tokens);
+        if (tokens_read) {
+            int new_pos = seek_token_right(&array, view.cursor.pos);
+            view_set_cursor(app, &view, seek_pos(new_pos), true);
+        }
+    }
     // TODO(joe): 'w' -> look for whitespace or a line break, and position the cursor on the next
     //            character that exist after it. If it's a code file, just position it at the beginning of the
     //            next token.

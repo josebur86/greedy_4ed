@@ -9,9 +9,11 @@
 //
 
 /* TODO(joe): VIM TODO
- *  -----Must have------
+ *  -----In Progress------
+ *  - p
  *  - y
  *  - visual mode (view_set_highlight)
+ *  -----Must have------
  *  - indenting (=)
  *  - Movement Chord support (d, r, c)
  *  - Mouse integration - select things with the mouse
@@ -19,13 +21,13 @@
  *  - visual block mode
  *  - . "dot" support
  *  - Brace matching %
- *  - File commands (gf)
  *  - Find/Replace
  *  - Find in Files
  *  - find corresponding file (h <-> cpp)
  *  - find corresponding file and display in other panel (h <-> cpp)
  *  - Shift-j collapse lines
  *  -----Nice to have------
+ *  - File commands (gf)
  *  - Completion
  *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
  *  - ctag support? does 4coder have something better?
@@ -81,11 +83,19 @@ static void register_ensure_storage_for_size(Register *r, uint32_t size)
 }
 #define register_to_string(r) make_string(r.content, r.size)
 
+struct VimHighlight
+{
+    Full_Cursor cursor;
+    int start;
+    int end;
+};
+
 static VimMode global_mode = NORMAL;
 static CommandMode global_command_mode = NONE;
 static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
+static VimHighlight global_highlight = {0};
 static Range global_sel_range = {0};
 static Full_Cursor global_sel_cursor = {0};
 
@@ -112,6 +122,7 @@ static void sync_to_mode(Application_Links *app)
     }
 }
 
+#if 0
 static void sync_highlight(Application_Links *app, bool turn_on)
 {
     uint32_t access = AccessProtected;
@@ -119,6 +130,58 @@ static void sync_highlight(Application_Links *app, bool turn_on)
     view_set_highlight(app, &view, global_sel_range.start, global_sel_range.end+1, turn_on);
     if (!turn_on) {
         view_set_cursor(app, &view, seek_pos(global_sel_cursor.pos), true);
+    }
+}
+#endif
+
+static VimHighlight highlight_start(Application_Links *app)
+{
+    VimHighlight highlight = {0};
+
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    highlight.cursor = view.cursor;
+    highlight.start = view.cursor.pos;
+    highlight.end = view.cursor.pos;
+
+    view_set_highlight(app, &view, highlight.start, highlight.end+1, true);
+
+    return highlight;
+}
+
+static void highlight_end(Application_Links *app, VimHighlight *highlight)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    view_set_highlight(app, &view, highlight->start, highlight->end+1, false);
+    view_set_cursor(app, &view, seek_pos(highlight->cursor.pos), true);
+}
+
+static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buffer_Seek seek)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    Full_Cursor cursor = {0};
+    int old_pos = highlight->cursor.pos;
+    if (view_compute_cursor(app, &view, seek, &highlight->cursor)) {
+        if (old_pos == highlight->start) {
+            highlight->start = highlight->cursor.pos;
+        } else if (old_pos == highlight->end) {
+            highlight->end = highlight->cursor.pos;
+        } else {
+            assert(!"Unexpected highlight position");
+        }
+
+        if (highlight->end < highlight->start) {
+            int temp = highlight->start;
+            highlight->start = highlight->end;
+            highlight->end = temp;
+        }
+
+        view_set_highlight(app, &view, highlight->start, highlight->end+1, true);
     }
 }
 
@@ -153,7 +216,7 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
     sync_to_mode(app);
 
     if (prev_mode == VISUAL) {
-        sync_highlight(app, false);
+        highlight_end(app, &global_highlight);
     }
 }
 
@@ -166,12 +229,9 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
     View_Summary view = get_active_view(app, access);
 
     if (global_mode == VISUAL) {
-        global_sel_range.start = view.cursor.pos;
-        global_sel_range.end = view.cursor.pos;
-        global_sel_cursor = view.cursor;
-        sync_highlight(app, true);
+        global_highlight = highlight_start(app);
     } else if (global_mode == NORMAL) {
-        sync_highlight(app, false);
+        highlight_end(app, &global_highlight);
     }
 }
 
@@ -352,22 +412,8 @@ static void vim_move_up(Application_Links *app)
         exec_command(app, move_up);
 
         if (global_mode == VISUAL) {
-            int32_t old_pos = global_sel_cursor.pos;
-            view_compute_cursor(app, &view, seek_line_char(global_sel_cursor.line-1, global_sel_cursor.character), &global_sel_cursor);
-            if (old_pos == global_sel_range.start) {
-                global_sel_range.start = global_sel_cursor.pos;
-            } else if (old_pos == global_sel_range.end) {
-                global_sel_range.end = global_sel_cursor.pos;
-                if (global_sel_range.end < global_sel_range.start) {
-                    int32_t temp = global_sel_range.start;
-                    global_sel_range.end = global_sel_range.start;
-                    global_sel_range.start = temp;
-                }
-            } else {
-                assert(!"Unexpected cursor position");
-            }
-
-            sync_highlight(app, true);
+            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line-1, global_highlight.cursor.character);
+            highlight_seek(app, &global_highlight, seek);
         }
     }
 }
@@ -384,94 +430,47 @@ static void vim_move_down(Application_Links *app)
         exec_command(app, move_down);
 
         if (global_mode == VISUAL) {
-            int32_t old_pos = global_sel_cursor.pos;
-            view_compute_cursor(app, &view, seek_line_char(global_sel_cursor.line+1, global_sel_cursor.character), &global_sel_cursor);
-            if (old_pos == global_sel_range.end) {
-                global_sel_range.end = global_sel_cursor.pos;
-            } else if (old_pos == global_sel_range.start) {
-                global_sel_range.start = global_sel_cursor.pos;
-                if (global_sel_range.end < global_sel_range.start) {
-                    int32_t temp = global_sel_range.start;
-                    global_sel_range.end = global_sel_range.start;
-                    global_sel_range.start = temp;
-                }
-            } else {
-                assert(!"Unexpected cursor position");
-            }
-
-            sync_highlight(app, true);
+            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line+1, global_highlight.cursor.character);
+            highlight_seek(app, &global_highlight, seek);
         }
     }
 }
 
-static bool at_line_boundary(Application_Links *app, bool moving_left)
+static bool at_line_boundary(Application_Links *app, Full_Cursor cursor, bool moving_left)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-    int boundary_pos = (moving_left) ? buffer_get_line_start(app, &buffer, view.cursor.line)
-                                     : buffer_get_line_end(app, &buffer, view.cursor.line);
-    return (view.cursor.pos == boundary_pos);
+    int boundary_pos = (moving_left) ? buffer_get_line_start(app, &buffer, cursor.line)
+                                     : buffer_get_line_end(app, &buffer, cursor.line);
+    return (cursor.pos == boundary_pos);
 }
 
 
 static void vim_move_left(Application_Links *app)
 {
-    if (!at_line_boundary(app, true)) {
-        uint32_t access = AccessProtected;
-        View_Summary view = get_active_view(app, access);
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
 
-
+    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, true)) {
         exec_command(app, move_left);
-
-        if (global_mode == VISUAL) {
-            int32_t old_pos = global_sel_cursor.pos;
-            view_compute_cursor(app, &view, seek_pos(old_pos-1), &global_sel_cursor);
-            if (old_pos == global_sel_range.start) {
-                global_sel_range.start = global_sel_cursor.pos;
-            } else if (old_pos == global_sel_range.end) {
-                global_sel_range.end = global_sel_cursor.pos;
-                if (global_sel_range.end < global_sel_range.start) {
-                    int32_t temp = global_sel_range.start;
-                    global_sel_range.end = global_sel_range.start;
-                    global_sel_range.start = temp;
-                }
-            } else {
-                assert(!"Unexpected cursor position");
-            }
-
-            sync_highlight(app, true);
-        }
+    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, true)) {
+        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos-1);
+        highlight_seek(app, &global_highlight, seek);
     }
 }
 
 static void vim_move_right(Application_Links *app)
 {
-    if (!at_line_boundary(app, false)) {
-        uint32_t access = AccessProtected;
-        View_Summary view = get_active_view(app, access);
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
 
+    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, true)) {
         exec_command(app, move_right);
-
-        if (global_mode == VISUAL) {
-            int32_t old_pos = global_sel_cursor.pos;
-            view_compute_cursor(app, &view, seek_pos(old_pos+1), &global_sel_cursor);
-            if (old_pos == global_sel_range.end) {
-                global_sel_range.end = global_sel_cursor.pos;
-            } else if (old_pos == global_sel_range.start) {
-                global_sel_range.start = global_sel_cursor.pos;
-                if (global_sel_range.end < global_sel_range.start) {
-                    int32_t temp = global_sel_range.start;
-                    global_sel_range.end = global_sel_range.start;
-                    global_sel_range.start = temp;
-                }
-            } else {
-                assert(!"Unexpected cursor position");
-            }
-
-            sync_highlight(app, true);
-        }
+    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, true)) {
+        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos+1);
+        highlight_seek(app, &global_highlight, seek);
     }
 }
 

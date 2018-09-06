@@ -9,31 +9,34 @@
 //
 
 /* TODO(joe): VIM TODO
+ *  -----Must have------
  *  - y
  *  - visual mode (view_set_highlight)
  *  - indenting (=)
  *  - Movement Chord support (d, r, c)
- *  - Registers
- *  - Mouse integration
+ *  - Mouse integration - select things with the mouse
  *  - search
  *  - visual block mode
  *  - . "dot" support
- *  - Completion
- *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
- *  - File commands (gf)
  *  - Brace matching %
+ *  - File commands (gf)
  *  - Find/Replace
  *  - Find in Files
- *  - ctag support? does 4coder have something better?
- *  - ctrl-a addition, ctrl-x subtraction
- *  - highlight word under cursor
  *  - find corresponding file (h <-> cpp)
  *  - find corresponding file and display in other panel (h <-> cpp)
- *  - Macro support
- *  - show line numbers? (Not sure if 4coder supports this yet)
- *  - Hide the mouse cursor unless it moves.
  *  - Shift-j collapse lines
+ *  -----Nice to have------
+ *  - Completion
+ *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
+ *  - ctag support? does 4coder have something better?
+ *  - ctrl-a addition, ctrl-x subtraction
+ *  - Macro support
+ *  - Hide the mouse cursor unless it moves.
  *  - zz to move current line to the center of the view.
+ *  -----Not Supported------
+ *  - show line numbers? (Not sure if 4coder supports this yet)
+ *  - highlight word under cursor (this ones won't work because the highlight and cursor are
+ *    mutually exclusive in 4ed.)
  */
 
 enum VimMode
@@ -474,40 +477,56 @@ static void vim_move_right(Application_Links *app)
 
 static void vim_seek_white_or_token_left(Application_Links *app)
 {
-    if (!at_line_boundary(app, true)) {
-        exec_command(app, seek_white_or_token_left);
-    }
+    exec_command(app, seek_white_or_token_left);
 }
 
-static void vim_seek_white_or_token_right(Application_Links *app)
+static void vim_seek_forward_word(Application_Links *app)
 {
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-    if (buffer.is_lexed){
-        Cpp_Token tokens[2];
-        Cpp_Token_Array array = {0};
-        array.count = 2;
-        array.max_count = 2;
-        array.tokens = tokens;
-        bool32 tokens_read = buffer_read_tokens(app, &buffer, 0, array.count, array.tokens);
-        if (tokens_read) {
-            int new_pos = seek_token_right(&array, view.cursor.pos);
-            view_set_cursor(app, &view, seek_pos(new_pos), true);
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, view.cursor.pos, &get_result)) {
+        int token_index = get_result.token_index;
+
+        Cpp_Token chunk[2];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)){
+            int target_token_index = token_index + 1;
+            if (target_token_index < stream.token_count) {
+                if (target_token_index == stream.end) {
+                    if (!forward_stream_tokens(&stream)) {
+                        return;
+                    }
+                }
+
+                Cpp_Token *token = stream.tokens + target_token_index;
+                view_set_cursor(app, &view, seek_pos(token->start), true);
+            }
         }
     }
-    // TODO(joe): 'w' -> look for whitespace or a line break, and position the cursor on the next
-    //            character that exist after it. If it's a code file, just position it at the beginning of the
-    //            next token.
-    //
-    //            'b' -> same as 'w' only go backwards in the stream.
-    //
-    //            'e' -> look for whitespace or a line break, and position the cursor on the
-    //            character exist just before it. If it's a code file, just position it at the end
-    //            of the current token or the end of the next token.
-    if (!at_line_boundary(app, false)) {
-        exec_command(app, seek_white_or_token_right);
+}
+
+static void vim_seek_forward_word_end(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, view.cursor.pos, &get_result)) {
+        int token_index = get_result.token_index;
+        if (get_result.in_whitespace || view.cursor.pos == get_result.token_end-1) {
+            token_index+=1;
+        }
+
+        Cpp_Token chunk[1];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 1)){
+            Cpp_Token *token = stream.tokens + token_index;
+            view_set_cursor(app, &view, seek_pos(token->start+token->size-1), true);
+        }
     }
 }
 
@@ -555,7 +574,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             // Might need to use the streaming interface to determine words, characters, etc
             case 'a': vim_append(app); break;
             case 'b': vim_seek_white_or_token_left(app); break;
-            case 'e': vim_seek_white_or_token_right(app); break;
+            case 'e': vim_seek_forward_word_end(app); break;
             case 'g': handle_g_key(app); break;
             case 'h': vim_move_left(app); break;
             case 'i': switch_to_insert_mode(app); break;
@@ -566,7 +585,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             case 'p': vim_paste_after(app); break;
             case 'u': exec_command(app, undo); break;
             case 'v': exec_command(app, toggle_visual_mode); break;
-            case 'w': vim_seek_white_or_token_right(app); break;
+            case 'w': vim_seek_forward_word(app); break;
             case 'x': exec_command(app, delete_char); break;
             case 'y': handle_y_key(app); break;
 

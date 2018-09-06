@@ -164,7 +164,6 @@ static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buff
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
 
-    Full_Cursor cursor = {0};
     int old_pos = highlight->cursor.pos;
     if (view_compute_cursor(app, &view, seek, &highlight->cursor)) {
         if (old_pos == highlight->start) {
@@ -224,9 +223,6 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
 {
     global_mode = (global_mode == VISUAL) ? NORMAL : VISUAL;
     sync_to_mode(app);
-
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
 
     if (global_mode == VISUAL) {
         global_highlight = highlight_start(app);
@@ -466,9 +462,9 @@ static void vim_move_right(Application_Links *app)
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
 
-    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, true)) {
+    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, false)) {
         exec_command(app, move_right);
-    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, true)) {
+    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, false)) {
         Buffer_Seek seek = seek_pos(global_highlight.cursor.pos+1);
         highlight_seek(app, &global_highlight, seek);
     }

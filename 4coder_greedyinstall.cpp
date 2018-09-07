@@ -32,6 +32,7 @@
  *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
  *  - ctag support? does 4coder have something better?
  *  - ctrl-a addition, ctrl-x subtraction
+ *  - f/t - search on this line.
  *  - Macro support
  *  - Hide the mouse cursor unless it moves.
  *  - zz to move current line to the center of the view.
@@ -96,8 +97,6 @@ static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
 static VimHighlight global_highlight = {0};
-static Range global_sel_range = {0};
-static Full_Cursor global_sel_cursor = {0};
 
 // Helpers
 static void sync_to_mode(Application_Links *app)
@@ -121,18 +120,6 @@ static void sync_to_mode(Application_Links *app)
         set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
     }
 }
-
-#if 0
-static void sync_highlight(Application_Links *app, bool turn_on)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    view_set_highlight(app, &view, global_sel_range.start, global_sel_range.end+1, turn_on);
-    if (!turn_on) {
-        view_set_cursor(app, &view, seek_pos(global_sel_cursor.pos), true);
-    }
-}
-#endif
 
 static VimHighlight highlight_start(Application_Links *app)
 {
@@ -201,7 +188,6 @@ static void enter_none_command_mode()
 
 // Mode Switching
 
-// TODO(joe): Should these be commands or just functions that are called?
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 {
     global_mode = INSERT;
@@ -213,6 +199,7 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
     VimMode prev_mode = global_mode;
     global_mode = NORMAL;
     sync_to_mode(app);
+    enter_none_command_mode();
 
     if (prev_mode == VISUAL) {
         highlight_end(app, &global_highlight);
@@ -240,7 +227,12 @@ CUSTOM_COMMAND_SIG(handle_g_key)
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
         Buffer_Seek seek = seek_pos(0);
-        view_set_cursor(app, &view, seek, true);
+
+        if (global_mode == NORMAL) {
+            view_set_cursor(app, &view, seek, true);
+        } else {
+            highlight_seek(app, &global_highlight, seek);
+        }
 
         enter_none_command_mode();
     }
@@ -481,8 +473,10 @@ static void vim_seek_forward_word(Application_Links *app)
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
     Cpp_Get_Token_Result get_result = {0};
-    if (buffer_get_token_index(app, &buffer, view.cursor.pos, &get_result)) {
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
         int token_index = get_result.token_index;
 
         Cpp_Token chunk[2];
@@ -497,7 +491,12 @@ static void vim_seek_forward_word(Application_Links *app)
                 }
 
                 Cpp_Token *token = stream.tokens + target_token_index;
-                view_set_cursor(app, &view, seek_pos(token->start), true);
+
+                if (global_mode == NORMAL) {
+                    view_set_cursor(app, &view, seek_pos(token->start), true);
+                } else if (global_mode == VISUAL) {
+                    highlight_seek(app, &global_highlight, seek_pos(token->start));
+                }
             }
         }
     }
@@ -509,10 +508,12 @@ static void vim_seek_forward_word_end(Application_Links *app)
     View_Summary view = get_active_view(app, access);
     Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
     Cpp_Get_Token_Result get_result = {0};
-    if (buffer_get_token_index(app, &buffer, view.cursor.pos, &get_result)) {
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
         int token_index = get_result.token_index;
-        if (get_result.in_whitespace || view.cursor.pos == get_result.token_end-1) {
+        if (get_result.in_whitespace || pos == get_result.token_end-1) {
             token_index+=1;
         }
 
@@ -520,7 +521,12 @@ static void vim_seek_forward_word_end(Application_Links *app)
         Stream_Tokens stream = {0};
         if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 1)){
             Cpp_Token *token = stream.tokens + token_index;
-            view_set_cursor(app, &view, seek_pos(token->start+token->size-1), true);
+
+            if (global_mode == NORMAL) {
+                view_set_cursor(app, &view, seek_pos(token->start+token->size-1), true);
+            } else if (global_mode == VISUAL) {
+                highlight_seek(app, &global_highlight, seek_pos(token->start+token->size-1));
+            }
         }
     }
 }
@@ -530,7 +536,42 @@ static void vim_seek_to_file_end(Application_Links *app)
     uint32_t access = AccessProtected;
     View_Summary view = get_active_view(app, access);
     Buffer_Seek seek = seek_xy(0.0f, max_f32, 1, true);
-    view_set_cursor(app, &view, seek, true);
+
+    if (global_mode == NORMAL) {
+        view_set_cursor(app, &view, seek, true);
+    } else if (global_mode == VISUAL) {
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_seek_beginning_of_line(Application_Links *app)
+{
+    if (global_mode == NORMAL) {
+        exec_command(app, seek_beginning_of_line);
+    } else if (global_mode == VISUAL) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+        int pos = buffer_get_line_start(app, &buffer, global_highlight.cursor.line);
+        Buffer_Seek seek = seek_pos(pos);
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_seek_end_of_line(Application_Links *app)
+{
+    if (global_mode == NORMAL) {
+        exec_command(app, seek_end_of_line);
+    } else if (global_mode == VISUAL) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+        int pos = buffer_get_line_end(app, &buffer, global_highlight.cursor.line);
+        Buffer_Seek seek = seek_pos(pos);
+        highlight_seek(app, &global_highlight, seek);
+    }
 }
 
 static void vim_ex_command(Application_Links *app)
@@ -590,8 +631,8 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
 
             case key_back: vim_move_left(app); break;
             case key_esc: exec_command(app, switch_to_normal_mode); break;
-            case '$': exec_command(app, seek_end_of_line); break;
-            case '^': exec_command(app, seek_beginning_of_line); break;
+            case '$': vim_seek_end_of_line(app); break;
+            case '^': vim_seek_beginning_of_line(app); break;
             case ':': vim_ex_command(app); break;
             case '/': exec_command(app, search); break;
         }

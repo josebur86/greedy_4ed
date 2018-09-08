@@ -16,17 +16,17 @@
  *  -----Must have------
  *  - indenting (=)
  *  - Movement Chord support (d, r, c)
- *  - Mouse integration - select things with the mouse
- *  - search
+ *  - Shift-j collapse lines
  *  - visual block mode
+ *  - search
  *  - . "dot" support
- *  - Brace matching %
  *  - Find/Replace
  *  - Find in Files
  *  - find corresponding file (h <-> cpp)
  *  - find corresponding file and display in other panel (h <-> cpp)
- *  - Shift-j collapse lines
+ *  - Mouse integration - select things with the mouse
  *  -----Nice to have------
+ *  - Brace matching %
  *  - File commands (gf)
  *  - Completion
  *  - Panel management (Ctrl-W Ctrl-V), (Ctrl-W Ctrl-H)
@@ -240,27 +240,41 @@ CUSTOM_COMMAND_SIG(handle_g_key)
 
 CUSTOM_COMMAND_SIG(handle_y_key)
 {
-    if (global_command_mode == NONE) {
-        enter_y_command_mode();
-    } else if (global_command_mode == Y_COMMANDS) {
-        // Put the current line into the yank register
+    if (global_mode == NORMAL) {
+        if (global_command_mode == NONE) {
+            enter_y_command_mode();
+        } else if (global_command_mode == Y_COMMANDS) {
+            // Put the current line into the yank register
+            uint32_t access = AccessProtected;
+            View_Summary view = get_active_view(app, access);
+            Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+            int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
+            int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
+
+            uint32_t size = end-start;
+            register_ensure_storage_for_size(&global_yank_register, size);
+            if (buffer_read_range(app, &buffer, start, end, global_yank_register.content)) {
+                global_yank_register.size = size;
+                global_yank_register.type = WHOLE_LINE;
+            }
+            enter_none_command_mode();
+        }
+    } else if (global_mode == VISUAL) {
         uint32_t access = AccessProtected;
         View_Summary view = get_active_view(app, access);
         Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-        int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
-        int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
 
-        uint32_t size = end-start;
+        uint32_t size = global_highlight.end-global_highlight.start;
         register_ensure_storage_for_size(&global_yank_register, size);
-        bool32 success = buffer_read_range(app, &buffer, start, end, global_yank_register.content);
-        global_yank_register.size = size;
-        global_yank_register.type = WHOLE_LINE;
-
-        if (success) {
-            // TODO(joe): Should I add an string terminator?
+        if (buffer_read_range(app, &buffer, global_highlight.start, global_highlight.end, global_yank_register.content)) {
+            global_yank_register.size = size;
+            if (buffer_get_line_number(app, &buffer, global_highlight.start) == buffer_get_line_number(app, &buffer, global_highlight.end)) {
+                global_yank_register.type = PARTIAL_LINE;
+            } else {
+                global_yank_register.type = MULTIPLE_LINES;
+            }
         }
-
-        enter_none_command_mode();
+        exec_command(app, toggle_visual_mode);
     }
 }
 
@@ -331,13 +345,52 @@ static void vim_paste_before(Application_Links *app)
     } else if (r->type == PARTIAL_LINE) {
         // NOTE(joe): A partial line register will paste its contents where the cursor is. After the
         // paste, the cursor will be at the end of the pasted register contents.
-        // TODO(joe): Implement!
-    } else if (r->type == MULTIPLE_LINES) {
-        // NOTE(joe): A partial line register will paste its contents where the cursor is. After the
-        // paste, the cursor will be at the beginning of the pasted register contents.
-        // TODO(joe): Implement!
-    }
+        uint32_t edit_len = r->size;
+        char *edit_str = push_array(part, char, edit_len);
+        copy_fast_unsafe(edit_str, r->content);
 
+        int32_t insert_pos = view.cursor.pos - 1;
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_pos(insert_pos+edit_len);
+        view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos, insert_pos + edit_len, paste.color);
+    } else if (r->type == MULTIPLE_LINES) {
+        // NOTE(joe): A Multiple lines register will paste its contents where the cursor is. After the
+        // paste, the cursor will be at the beginning of the pasted register contents.
+        uint32_t edit_len = r->size;
+        char *edit_str = push_array(part, char, edit_len);
+        copy_fast_unsafe(edit_str, r->content);
+
+        int32_t insert_pos = view.cursor.pos - 1;
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_pos(insert_pos);
+        view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos, insert_pos + edit_len, paste.color);
+    }
 
     end_temp_memory(temp);
 }
@@ -380,7 +433,56 @@ static void vim_paste_after(Application_Links *app)
         paste.tag = Stag_Paste;
         get_theme_colors(app, &paste, 1);
         view_post_fade(app, &view, 0.667f, insert_pos + 1, insert_pos + 1 + edit_len, paste.color);
+    } else if (r->type == PARTIAL_LINE) {
+        // NOTE(joe): A partial line register will paste its contents where the cursor is. After the
+        // paste, the cursor will be at the end of the pasted register contents.
+        uint32_t edit_len = r->size;
+        char *edit_str = push_array(part, char, edit_len);
+        copy_fast_unsafe(edit_str, r->content);
+
+        int32_t insert_pos = view.cursor.pos;
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_pos(insert_pos+edit_len);
+        view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos, insert_pos + edit_len, paste.color);
+    } else if (r->type == MULTIPLE_LINES) {
+        // NOTE(joe): A Multiple lines register will paste its contents where the cursor is. After the
+        // paste, the cursor will be at the beginning of the pasted register contents.
+        uint32_t edit_len = r->size;
+        char *edit_str = push_array(part, char, edit_len);
+        copy_fast_unsafe(edit_str, r->content);
+
+        int32_t insert_pos = view.cursor.pos;
+
+        Buffer_Edit edit = {0};
+        edit.str_start = 0;
+        edit.len = edit_len;
+        edit.start = insert_pos;
+        edit.end = insert_pos;
+
+        buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
+
+        Buffer_Seek seek = seek_pos(insert_pos);
+        view_set_cursor(app, &view, seek, true);
+
+        Theme_Color paste;
+        paste.tag = Stag_Paste;
+        get_theme_colors(app, &paste, 1);
+        view_post_fade(app, &view, 0.667f, insert_pos, insert_pos + edit_len, paste.color);
     }
+
 
     end_temp_memory(temp);
 }

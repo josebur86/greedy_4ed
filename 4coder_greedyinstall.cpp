@@ -462,9 +462,39 @@ static void vim_move_right(Application_Links *app)
     }
 }
 
-static void vim_seek_white_or_token_left(Application_Links *app)
+static void vim_seek_back_word(Application_Links *app)
 {
-    exec_command(app, seek_white_or_token_left);
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
+        int token_index = get_result.token_index;
+
+        Cpp_Token chunk[2];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)) {
+            Cpp_Token *token = stream.tokens + token_index;
+            if (pos == token->start) {
+                token_index -= 1;
+            }
+            if (token_index < stream.start) {
+                if (!backward_stream_tokens(&stream)) {
+                    return;
+                }
+            }
+            token = stream.tokens + token_index;
+
+            if (global_mode == NORMAL) {
+                view_set_cursor(app, &view, seek_pos(token->start), true);
+            } else if (global_mode == VISUAL) {
+                highlight_seek(app, &global_highlight, seek_pos(token->start));
+            }
+        }
+    }
 }
 
 static void vim_seek_forward_word(Application_Links *app)
@@ -609,7 +639,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             // TODO(joe): w and e aren't properly emulated with seek_token_right.
             // Might need to use the streaming interface to determine words, characters, etc
             case 'a': vim_append(app); break;
-            case 'b': vim_seek_white_or_token_left(app); break;
+            case 'b': vim_seek_back_word(app); break;
             case 'e': vim_seek_forward_word_end(app); break;
             case 'g': handle_g_key(app); break;
             case 'h': vim_move_left(app); break;

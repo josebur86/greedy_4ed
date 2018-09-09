@@ -14,7 +14,6 @@
  *  - y
  *  - visual mode (view_set_highlight)
  *  -----Must have------
- *  - indenting (=)
  *  - Movement Chord support (d, r, c)
  *  - Shift-j collapse lines
  *  - visual block mode
@@ -24,6 +23,7 @@
  *  - Find in Files
  *  - find corresponding file (h <-> cpp)
  *  - find corresponding file and display in other panel (h <-> cpp)
+ *  - indenting (=) (this is low priority because 4ed does so much to help already)
  *  - Mouse integration - select things with the mouse
  *  -----Nice to have------
  *  - Brace matching %
@@ -264,9 +264,9 @@ CUSTOM_COMMAND_SIG(handle_y_key)
         View_Summary view = get_active_view(app, access);
         Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
 
-        uint32_t size = global_highlight.end-global_highlight.start;
+        uint32_t size = global_highlight.end-global_highlight.start+1;
         register_ensure_storage_for_size(&global_yank_register, size);
-        if (buffer_read_range(app, &buffer, global_highlight.start, global_highlight.end, global_yank_register.content)) {
+        if (buffer_read_range(app, &buffer, global_highlight.start, global_highlight.end+1, global_yank_register.content)) {
             global_yank_register.size = size;
             if (buffer_get_line_number(app, &buffer, global_highlight.start) == buffer_get_line_number(app, &buffer, global_highlight.end)) {
                 global_yank_register.type = PARTIAL_LINE;
@@ -304,6 +304,7 @@ static void vim_newline_above_then_insert(Application_Links *app)
     exec_command(app, switch_to_insert_mode);
 }
 
+// TODO(joe): vim_paste_before/after() can be compressed better.
 static void vim_paste_before(Application_Links *app)
 {
     Register *r = &global_yank_register;
@@ -349,7 +350,7 @@ static void vim_paste_before(Application_Links *app)
         char *edit_str = push_array(part, char, edit_len);
         copy_fast_unsafe(edit_str, r->content);
 
-        int32_t insert_pos = view.cursor.pos - 1;
+        int32_t insert_pos = view.cursor.pos;
 
         Buffer_Edit edit = {0};
         edit.str_start = 0;
@@ -359,7 +360,7 @@ static void vim_paste_before(Application_Links *app)
 
         buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
 
-        Buffer_Seek seek = seek_pos(insert_pos+edit_len);
+        Buffer_Seek seek = seek_pos(insert_pos+edit_len-1);
         view_set_cursor(app, &view, seek, true);
 
         Theme_Color paste;
@@ -373,7 +374,7 @@ static void vim_paste_before(Application_Links *app)
         char *edit_str = push_array(part, char, edit_len);
         copy_fast_unsafe(edit_str, r->content);
 
-        int32_t insert_pos = view.cursor.pos - 1;
+        int32_t insert_pos = view.cursor.pos;
 
         Buffer_Edit edit = {0};
         edit.str_start = 0;
@@ -440,7 +441,7 @@ static void vim_paste_after(Application_Links *app)
         char *edit_str = push_array(part, char, edit_len);
         copy_fast_unsafe(edit_str, r->content);
 
-        int32_t insert_pos = view.cursor.pos;
+        int32_t insert_pos = view.cursor.pos+1;
 
         Buffer_Edit edit = {0};
         edit.str_start = 0;
@@ -450,7 +451,7 @@ static void vim_paste_after(Application_Links *app)
 
         buffer_batch_edit(app, &buffer, edit_str, edit_len, &edit, 1, BatchEdit_Normal);
 
-        Buffer_Seek seek = seek_pos(insert_pos+edit_len);
+        Buffer_Seek seek = seek_pos(insert_pos+edit_len-1);
         view_set_cursor(app, &view, seek, true);
 
         Theme_Color paste;
@@ -464,7 +465,7 @@ static void vim_paste_after(Application_Links *app)
         char *edit_str = push_array(part, char, edit_len);
         copy_fast_unsafe(edit_str, r->content);
 
-        int32_t insert_pos = view.cursor.pos;
+        int32_t insert_pos = view.cursor.pos+1;
 
         Buffer_Edit edit = {0};
         edit.str_start = 0;

@@ -54,6 +54,7 @@ enum CommandMode
     D_COMMANDS,
     G_COMMANDS,
     Y_COMMANDS,
+    Z_COMMANDS,
 };
 
 enum RegisterType
@@ -170,22 +171,6 @@ static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buff
     }
 }
 
-static void yank_current_line(Application_Links *app)
-{
-	uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-    int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
-    int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
-
-    uint32_t size = end-start;
-    register_ensure_storage_for_size(&global_yank_register, size);
-    if (buffer_read_range(app, &buffer, start, end, global_yank_register.content)) {
-        global_yank_register.size = size;
-        global_yank_register.type = WHOLE_LINE;
-    }
-}
-
 static void yank_range(Application_Links *app, int start, int end)
 {
     uint32_t access = AccessProtected;
@@ -196,9 +181,32 @@ static void yank_range(Application_Links *app, int start, int end)
     register_ensure_storage_for_size(&global_yank_register, size);
     if (buffer_read_range(app, &buffer, start, end+1, global_yank_register.content)) {
         global_yank_register.size = size;
-        // TODO(joe): Determine what kind of register this is. global_yank_register.type = WHOLE_LINE;
-        global_yank_register.type = ?????;
+
+        int start_line = buffer_get_line_number(app, &buffer, start);
+        int end_line = buffer_get_line_number(app, &buffer, end);
+        if (start_line == end_line) {
+            int line_start_pos = buffer_get_line_start(app, &buffer, start_line);
+            int line_end_pos = buffer_get_line_end(app, &buffer, start_line);
+            if (start == line_start_pos && end == line_end_pos) {
+                global_yank_register.type = WHOLE_LINE;
+            } else {
+                global_yank_register.type = PARTIAL_LINE;
+            }
+        } else {
+            global_yank_register.type = MULTIPLE_LINES;
+        }
     }
+}
+
+static void yank_current_line(Application_Links *app)
+{
+	uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+    int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
+    int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
+
+    yank_range(app, start, end);
 }
 
 static void enter_d_command_mode()
@@ -214,6 +222,11 @@ static void enter_g_command_mode()
 static void enter_y_command_mode()
 {
     global_command_mode = Y_COMMANDS;
+}
+
+static void enter_z_command_mode()
+{
+    global_command_mode = Z_COMMANDS;
 }
 
 static void enter_none_command_mode()
@@ -314,6 +327,17 @@ CUSTOM_COMMAND_SIG(handle_y_key)
     }
 }
 
+CUSTOM_COMMAND_SIG(handle_z_key)
+{
+    if (global_command_mode == NONE) {
+        enter_z_command_mode();
+    } else {
+        // Center the view on the cursor.
+        exec_command(app, center_view);
+        enter_none_command_mode();
+    }
+}
+
 //
 // Editing
 //
@@ -354,9 +378,9 @@ static void vim_delete_highlight(Application_Links *app, bool save_to_yank_regis
         Buffer_Summary buffer = get_buffer(app, view.buffer_id, AccessOpen);
 
         if (save_to_yank_register) {
-
+            yank_range(app, global_highlight.start, global_highlight.end);
         }
-        buffer_replace_range(app, &buffer, global_highlight.cursor.start, global_highlight.cursor.end+1, 0, 0);
+        buffer_replace_range(app, &buffer, global_highlight.start, global_highlight.end+1, 0, 0);
     }
 }
 
@@ -795,7 +819,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
     {
         switch(code)
         {
-                                 case 'a': vim_append(app); break;
+            case 'a': vim_append(app); break;
             case 'b': vim_seek_back_word(app); break;
             case 'd': handle_d_key(app); break;
             case 'e': vim_seek_forward_word_end(app); break;
@@ -812,6 +836,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             case 'w': vim_seek_forward_word(app); break;
             case 'x': exec_command(app, delete_char); break;
             case 'y': handle_y_key(app); break;
+            case 'z': handle_z_key(app); break;
 
             case 'G': vim_seek_to_file_end(app); break;
             case 'O': vim_newline_above_then_insert(app); break;

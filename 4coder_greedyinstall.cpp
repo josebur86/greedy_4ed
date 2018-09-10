@@ -10,11 +10,8 @@
 
 /* TODO(joe): VIM TODO
  *  -----In Progress------
- *  - p
- *  - y
- *  - visual mode (view_set_highlight)
- *  -----Must have------
  *  - Movement Chord support (d, r, c)
+ *  -----Must have------
  *  - Shift-j collapse lines
  *  - visual block mode
  *  - search
@@ -33,6 +30,7 @@
  *  - ctag support? does 4coder have something better?
  *  - ctrl-a addition, ctrl-x subtraction
  *  - f/t - search on this line.
+ *  - Go to line number
  *  - Macro support
  *  - Hide the mouse cursor unless it moves.
  *  - zz to move current line to the center of the view.
@@ -53,6 +51,7 @@ enum VimMode
 enum CommandMode
 {
     NONE = 0,
+    D_COMMANDS,
     G_COMMANDS,
     Y_COMMANDS,
 };
@@ -171,6 +170,42 @@ static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buff
     }
 }
 
+static void yank_current_line(Application_Links *app)
+{
+	uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+    int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
+    int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
+
+    uint32_t size = end-start;
+    register_ensure_storage_for_size(&global_yank_register, size);
+    if (buffer_read_range(app, &buffer, start, end, global_yank_register.content)) {
+        global_yank_register.size = size;
+        global_yank_register.type = WHOLE_LINE;
+    }
+}
+
+static void yank_range(Application_Links *app, int start, int end)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    uint32_t size = end-start+1;
+    register_ensure_storage_for_size(&global_yank_register, size);
+    if (buffer_read_range(app, &buffer, start, end+1, global_yank_register.content)) {
+        global_yank_register.size = size;
+        // TODO(joe): Determine what kind of register this is. global_yank_register.type = WHOLE_LINE;
+        global_yank_register.type = ?????;
+    }
+}
+
+static void enter_d_command_mode()
+{
+    global_command_mode = D_COMMANDS;
+}
+
 static void enter_g_command_mode()
 {
     global_command_mode = G_COMMANDS;
@@ -218,6 +253,18 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
     }
 }
 
+CUSTOM_COMMAND_SIG(handle_d_key)
+{
+    if (global_command_mode == NONE) {
+        enter_d_command_mode();
+    } else if (global_command_mode == D_COMMANDS) {
+        // Delete the current line while keeping its contents in the yank register.
+        yank_current_line(app);
+        exec_command(app, delete_line);
+        enter_none_command_mode();
+    }
+}
+
 CUSTOM_COMMAND_SIG(handle_g_key)
 {
     if (global_command_mode == NONE) {
@@ -244,19 +291,7 @@ CUSTOM_COMMAND_SIG(handle_y_key)
         if (global_command_mode == NONE) {
             enter_y_command_mode();
         } else if (global_command_mode == Y_COMMANDS) {
-            // Put the current line into the yank register
-            uint32_t access = AccessProtected;
-            View_Summary view = get_active_view(app, access);
-            Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-            int32_t start = buffer_get_line_start(app, &buffer, view.cursor.line);
-            int32_t end = buffer_get_line_end(app, &buffer, view.cursor.line);
-
-            uint32_t size = end-start;
-            register_ensure_storage_for_size(&global_yank_register, size);
-            if (buffer_read_range(app, &buffer, start, end, global_yank_register.content)) {
-                global_yank_register.size = size;
-                global_yank_register.type = WHOLE_LINE;
-            }
+            yank_current_line(app);
             enter_none_command_mode();
         }
     } else if (global_mode == VISUAL) {
@@ -268,7 +303,8 @@ CUSTOM_COMMAND_SIG(handle_y_key)
         register_ensure_storage_for_size(&global_yank_register, size);
         if (buffer_read_range(app, &buffer, global_highlight.start, global_highlight.end+1, global_yank_register.content)) {
             global_yank_register.size = size;
-            if (buffer_get_line_number(app, &buffer, global_highlight.start) == buffer_get_line_number(app, &buffer, global_highlight.end)) {
+            if (buffer_get_line_number(app, &buffer, global_highlight.start) ==
+                buffer_get_line_number(app, &buffer, global_highlight.end)) {
                 global_yank_register.type = PARTIAL_LINE;
             } else {
                 global_yank_register.type = MULTIPLE_LINES;
@@ -281,10 +317,17 @@ CUSTOM_COMMAND_SIG(handle_y_key)
 //
 // Editing
 //
+static void vim_handle_tab(Application_Links *app)
+{
+	write_string(app, make_lit_string("    "));
+}
+
 static void vim_append(Application_Links *app)
 {
+    uint32_t access = AccessOpen;
+    View_Summary view = get_active_view(app, access);
+    view_set_cursor(app, &view, seek_pos(view.cursor.pos+1), true);
     exec_command(app, switch_to_insert_mode);
-    // TODO(joe): Position the cursor correctly.
 }
 
 static void vim_newline_below_then_insert(Application_Links *app)
@@ -302,6 +345,19 @@ static void vim_newline_above_then_insert(Application_Links *app)
     exec_command(app, move_up);
     exec_command(app, auto_tab_line_at_cursor);
     exec_command(app, switch_to_insert_mode);
+}
+
+static void vim_delete_highlight(Application_Links *app, bool save_to_yank_register)
+{
+    if (global_mode == VISUAL) {
+        View_Summary view = get_active_view(app, AccessOpen);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, AccessOpen);
+
+        if (save_to_yank_register) {
+
+        }
+        buffer_replace_range(app, &buffer, global_highlight.cursor.start, global_highlight.cursor.end+1, 0, 0);
+    }
 }
 
 // TODO(joe): vim_paste_before/after() can be compressed better.
@@ -739,10 +795,9 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
     {
         switch(code)
         {
-            // TODO(joe): w and e aren't properly emulated with seek_token_right.
-            // Might need to use the streaming interface to determine words, characters, etc
-            case 'a': vim_append(app); break;
+                                 case 'a': vim_append(app); break;
             case 'b': vim_seek_back_word(app); break;
+            case 'd': handle_d_key(app); break;
             case 'e': vim_seek_forward_word_end(app); break;
             case 'g': handle_g_key(app); break;
             case 'h': vim_move_left(app); break;
@@ -766,6 +821,7 @@ static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Mod
             case key_esc: exec_command(app, switch_to_normal_mode); break;
             case '$': vim_seek_end_of_line(app); break;
             case '^': vim_seek_beginning_of_line(app); break;
+            case '*': exec_command(app, search_identifier); break;
             case ':': vim_ex_command(app); break;
             case '/': exec_command(app, search); break;
         }
@@ -792,6 +848,7 @@ void vim_handle_key_insert(Application_Links *app, Key_Code code, Key_Modifier_F
     {
         case key_back: exec_command(app, backspace_char); break;
         case key_esc: exec_command(app, switch_to_normal_mode); break;
+        case '\t': exec_command(app, vim_handle_tab); break;
         default: exec_command(app, write_character);
     }
 }
@@ -847,6 +904,19 @@ START_HOOK_SIG(greedy_start)
     return 0;
 }
 
+OPEN_FILE_HOOK_SIG(greedy_file_settings)
+{
+    unsigned int access = AccessAll;
+    Buffer_Summary buffer = get_buffer(app, buffer_id, access);
+
+    buffer_set_setting(app, &buffer, BufferSetting_Lex, 1);
+    buffer_set_setting(app, &buffer, BufferSetting_VirtualWhitespace, 0);
+    buffer_set_setting(app, &buffer, BufferSetting_Eol, 0); // unix endings
+    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid_file);
+
+    return 0;
+}
+
 //
 //
 //
@@ -862,7 +932,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_scroll_rule(context, smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
 
-    // TODO(joe): Is it possibel to define my own mapid? Why should I?
+    // TODO(joe): Is it possible to define my own mapid? Why should I?
     begin_map(context, mapid_file);
     {
         bind_vanilla_keys(context, write_character);
@@ -879,6 +949,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
         //
         bind(context, key_esc, MDFR_NONE, vim_handle_key);
         bind(context, key_back, MDFR_NONE, vim_handle_key);
+        bind(context, '\t', MDFR_NONE, vim_handle_key);
 
         for (Key_Code code = '!'; code <= '~'; ++code) {
             bind(context, code, MDFR_NONE, vim_handle_key);

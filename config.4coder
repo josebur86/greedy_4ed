@@ -11,7 +11,7 @@ use_scroll_bars = false;
 use_file_bars = true;
 
 // Code Wrapping
-enable_virtual_whitespace = true;
+enable_virtual_whitespace = false;
 enable_code_wrapping = true;
 automatically_adjust_wrapping = true;
 default_wrap_width = 1024;

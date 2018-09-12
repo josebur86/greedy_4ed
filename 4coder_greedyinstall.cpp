@@ -42,7 +42,7 @@
 
 enum VimMode
 {
-    NORMAL = 0,
+    NORMAL = (1 << 16),
     INSERT,
     VISUAL,
     VISUAL_BLOCK,
@@ -902,6 +902,15 @@ CUSTOM_COMMAND_SIG(vim_handle_key)
 //
 //
 
+static void set_current_map(Application_Links *app, int mapid)
+{
+    unsigned int access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid);
+}
+
 START_HOOK_SIG(greedy_start)
 {
     default_start(app, files, file_count, flags, flag_count);
@@ -923,6 +932,7 @@ START_HOOK_SIG(greedy_start)
 
     set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
 
+    set_current_map(app, NORMAL);
     global_mode = NORMAL;
     sync_to_mode(app);
 
@@ -957,17 +967,56 @@ extern "C" GET_BINDING_DATA(get_bindings)
     set_scroll_rule(context, smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
 
-    // TODO(joe): Is it possible to define my own mapid? Why should I?
-    begin_map(context, mapid_file);
+    begin_map(context, mapid_global);
     {
-        bind_vanilla_keys(context, write_character);
-
         //
         // 4coder specific
         //
         bind(context, key_f4, MDFR_ALT, exit_4coder);
         bind(context, '\n', MDFR_ALT, toggle_fullscreen);
         bind(context, key_insert, MDFR_SHIFT, paste_and_indent);
+    }
+    end_map(context);
+
+    begin_map(context, NORMAL);
+    {
+        bind(context, 'a', MDFR_NONE, vim_append);
+        bind(context, 'b', MDFR_NONE, vim_seek_back_word);
+        bind(context, 'd', MDFR_NONE, handle_d_key);
+        bind(context, 'e', MDFR_NONE, vim_seek_forward_word_end);
+        bind(context, 'g', MDFR_NONE, handle_g_key);
+        bind(context, 'h', MDFR_NONE, vim_move_left);
+        bind(context, 'i', MDFR_NONE, switch_to_insert_mode);
+        bind(context, 'j', MDFR_NONE, vim_move_down);
+        bind(context, 'k', MDFR_NONE, vim_move_up);
+        bind(context, 'l', MDFR_NONE, vim_move_right);
+        bind(context, 'o', MDFR_NONE, vim_newline_below_then_insert);
+        bind(context, 'p', MDFR_NONE, vim_paste_after);
+        bind(context, 'u', MDFR_NONE, undo);
+        bind(context, 'v', MDFR_NONE, toggle_visual_mode);
+        bind(context, 'w', MDFR_NONE, vim_seek_forward_word);
+        bind(context, 'x', MDFR_NONE, delete_char);
+        bind(context, 'y', MDFR_NONE, handle_y_key);
+        bind(context, 'z', MDFR_NONE, handle_z_key);
+
+        bind(context, 'G', MDFR_SHIFT, vim_seek_to_file_end);
+        bind(context, 'O', MDFR_SHIFT, vim_newline_above_then_insert);
+        bind(context, 'P', MDFR_SHIFT, vim_paste_before);
+
+        bind(context, key_back, MDFR_NONE, vim_move_left);
+        bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
+        bind(context, '$',      MDFR_NONE, vim_seek_end_of_line);
+        bind(context, '^',      MDFR_NONE, vim_seek_beginning_of_line);
+        bind(context, '*',      MDFR_NONE, search_identifier);
+        bind(context, ':',      MDFR_NONE, vim_ex_command);
+        bind(context, '/',      MDFR_NONE, search);
+    }
+    end_map(context);
+
+#if 0
+    begin_map(context, mapid_file);
+    {
+        bind_vanilla_keys(context, write_character);
 
         //
         // VIM
@@ -976,12 +1025,13 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, key_back, MDFR_NONE, vim_handle_key);
         bind(context, '\t', MDFR_NONE, vim_handle_key);
 
-        for (Key_Code code = '!'; code <= '~'; ++code) {
+        for (Key_Code code = ' '; code <= '~'; ++code) {
             bind(context, code, MDFR_NONE, vim_handle_key);
             bind(context, code, MDFR_CTRL, vim_handle_key);
         }
     }
     end_map(context);
+#endif
 
     end_bind_helper(context);
     return context->write_total;

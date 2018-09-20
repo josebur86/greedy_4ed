@@ -10,7 +10,7 @@
 
 /* TODO(joe): VIM TODO
  *  -----In Progress------
- *  - Movement Chord support (d, r, c)
+ *  - Movement Chord support (v, d, r, c)
  *  -----Must have------
  *  - Shift-j collapse lines
  *  - visual block mode
@@ -55,6 +55,7 @@ enum VimKeyMaps
     mapid_visual,
     mapid_visual_block,
 
+    mapid_movement,
     mapid_delete,
 };
 
@@ -100,6 +101,7 @@ struct VimHighlight
     int start;
     int end;
 };
+static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buffer_Seek seek);
 
 static VimMode global_mode = NORMAL;
 static CommandMode global_command_mode = NONE;
@@ -107,6 +109,238 @@ static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
 static VimHighlight global_highlight = {0};
+
+//
+// Movement
+// Everthing builds on movement
+//
+static void vim_move_up(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
+    if (line > 1)
+    {
+        exec_command(app, move_up);
+
+        if (global_mode == VISUAL) {
+            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line-1, global_highlight.cursor.character);
+            highlight_seek(app, &global_highlight, seek);
+        }
+    }
+}
+
+static void vim_move_down(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
+    if (line < buffer.line_count)
+    {
+        exec_command(app, move_down);
+
+        if (global_mode == VISUAL) {
+            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line+1, global_highlight.cursor.character);
+            highlight_seek(app, &global_highlight, seek);
+        }
+    }
+}
+
+static bool at_line_boundary(Application_Links *app, Full_Cursor cursor, bool moving_left)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int boundary_pos = (moving_left) ? buffer_get_line_start(app, &buffer, cursor.line)
+                                     : buffer_get_line_end(app, &buffer, cursor.line);
+    return (cursor.pos == boundary_pos);
+}
+
+
+static void vim_move_left(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, true)) {
+        exec_command(app, move_left);
+    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, true)) {
+        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos-1);
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_move_right(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, false)) {
+        exec_command(app, move_right);
+    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, false)) {
+        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos+1);
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_move_back_word(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
+        int token_index = get_result.token_index;
+
+        Cpp_Token chunk[2];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)) {
+            Cpp_Token *token = stream.tokens + token_index;
+            if (pos == token->start) {
+                token_index -= 1;
+            }
+            if (token_index < stream.start) {
+                if (!backward_stream_tokens(&stream)) {
+                    return;
+                }
+            }
+            token = stream.tokens + token_index;
+
+            if (global_mode == NORMAL) {
+                view_set_cursor(app, &view, seek_pos(token->start), true);
+            } else if (global_mode == VISUAL) {
+                highlight_seek(app, &global_highlight, seek_pos(token->start));
+            }
+        }
+    }
+}
+
+static void vim_move_forward_word(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
+        int token_index = get_result.token_index;
+
+        Cpp_Token chunk[2];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)){
+            int target_token_index = token_index + 1;
+            if (target_token_index < stream.token_count) {
+                if (target_token_index == stream.end) {
+                    if (!forward_stream_tokens(&stream)) {
+                        return;
+                    }
+                }
+
+                Cpp_Token *token = stream.tokens + target_token_index;
+
+                if (global_mode == NORMAL) {
+                    view_set_cursor(app, &view, seek_pos(token->start), true);
+                } else if (global_mode == VISUAL) {
+                    highlight_seek(app, &global_highlight, seek_pos(token->start));
+                }
+            }
+        }
+    }
+}
+
+static void vim_move_forward_word_end(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
+
+    Cpp_Get_Token_Result get_result = {0};
+    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
+        int token_index = get_result.token_index;
+        if (get_result.in_whitespace || pos == get_result.token_end-1) {
+            token_index+=1;
+        }
+
+        Cpp_Token chunk[1];
+        Stream_Tokens stream = {0};
+        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 1)){
+            Cpp_Token *token = stream.tokens + token_index;
+
+            if (global_mode == NORMAL) {
+                view_set_cursor(app, &view, seek_pos(token->start+token->size-1), true);
+            } else if (global_mode == VISUAL) {
+                highlight_seek(app, &global_highlight, seek_pos(token->start+token->size-1));
+            }
+        }
+    }
+}
+
+static void vim_move_to_file_end(Application_Links *app)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+    Buffer_Seek seek = seek_xy(0.0f, max_f32, 1, true);
+
+    if (global_mode == NORMAL) {
+        view_set_cursor(app, &view, seek, true);
+    } else if (global_mode == VISUAL) {
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_move_beginning_of_line(Application_Links *app)
+{
+    if (global_mode == NORMAL) {
+        exec_command(app, seek_beginning_of_line);
+    } else if (global_mode == VISUAL) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+        int pos = buffer_get_line_start(app, &buffer, global_highlight.cursor.line);
+        Buffer_Seek seek = seek_pos(pos);
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_move_end_of_line(Application_Links *app)
+{
+    if (global_mode == NORMAL) {
+        exec_command(app, seek_end_of_line);
+    } else if (global_mode == VISUAL) {
+        uint32_t access = AccessProtected;
+        View_Summary view = get_active_view(app, access);
+        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
+
+        int pos = buffer_get_line_end(app, &buffer, global_highlight.cursor.line);
+        Buffer_Seek seek = seek_pos(pos);
+        highlight_seek(app, &global_highlight, seek);
+    }
+}
+
+static void vim_page_up(Application_Links *app)
+{
+    // TODO(joe): Any active mode should be affected by this movement.
+    exec_command(app, page_up);
+}
+
+static void vim_page_down(Application_Links *app)
+{
+    // TODO(joe): Any active mode should be affected by this movement.
+    exec_command(app, page_down);
+}
 
 // Helpers
 static void sync_to_mode(Application_Links *app)
@@ -576,225 +810,6 @@ static void vim_paste_after(Application_Links *app)
     end_temp_memory(temp);
 }
 
-//
-// Moving
-//
-static void vim_move_up(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
-    if (line > 1)
-    {
-        exec_command(app, move_up);
-
-        if (global_mode == VISUAL) {
-            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line-1, global_highlight.cursor.character);
-            highlight_seek(app, &global_highlight, seek);
-        }
-    }
-}
-
-static void vim_move_down(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int line = buffer_get_line_number(app, &buffer, view.cursor.pos);
-    if (line < buffer.line_count)
-    {
-        exec_command(app, move_down);
-
-        if (global_mode == VISUAL) {
-            Buffer_Seek seek = seek_line_char(global_highlight.cursor.line+1, global_highlight.cursor.character);
-            highlight_seek(app, &global_highlight, seek);
-        }
-    }
-}
-
-static bool at_line_boundary(Application_Links *app, Full_Cursor cursor, bool moving_left)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int boundary_pos = (moving_left) ? buffer_get_line_start(app, &buffer, cursor.line)
-                                     : buffer_get_line_end(app, &buffer, cursor.line);
-    return (cursor.pos == boundary_pos);
-}
-
-
-static void vim_move_left(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-
-    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, true)) {
-        exec_command(app, move_left);
-    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, true)) {
-        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos-1);
-        highlight_seek(app, &global_highlight, seek);
-    }
-}
-
-static void vim_move_right(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-
-    if (global_mode == NORMAL && !at_line_boundary(app, view.cursor, false)) {
-        exec_command(app, move_right);
-    } else if (global_mode == VISUAL && !at_line_boundary(app, global_highlight.cursor, false)) {
-        Buffer_Seek seek = seek_pos(global_highlight.cursor.pos+1);
-        highlight_seek(app, &global_highlight, seek);
-    }
-}
-
-static void vim_seek_back_word(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
-
-    Cpp_Get_Token_Result get_result = {0};
-    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
-        int token_index = get_result.token_index;
-
-        Cpp_Token chunk[2];
-        Stream_Tokens stream = {0};
-        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)) {
-            Cpp_Token *token = stream.tokens + token_index;
-            if (pos == token->start) {
-                token_index -= 1;
-            }
-            if (token_index < stream.start) {
-                if (!backward_stream_tokens(&stream)) {
-                    return;
-                }
-            }
-            token = stream.tokens + token_index;
-
-            if (global_mode == NORMAL) {
-                view_set_cursor(app, &view, seek_pos(token->start), true);
-            } else if (global_mode == VISUAL) {
-                highlight_seek(app, &global_highlight, seek_pos(token->start));
-            }
-        }
-    }
-}
-
-static void vim_seek_forward_word(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
-
-    Cpp_Get_Token_Result get_result = {0};
-    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
-        int token_index = get_result.token_index;
-
-        Cpp_Token chunk[2];
-        Stream_Tokens stream = {0};
-        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 2)){
-            int target_token_index = token_index + 1;
-            if (target_token_index < stream.token_count) {
-                if (target_token_index == stream.end) {
-                    if (!forward_stream_tokens(&stream)) {
-                        return;
-                    }
-                }
-
-                Cpp_Token *token = stream.tokens + target_token_index;
-
-                if (global_mode == NORMAL) {
-                    view_set_cursor(app, &view, seek_pos(token->start), true);
-                } else if (global_mode == VISUAL) {
-                    highlight_seek(app, &global_highlight, seek_pos(token->start));
-                }
-            }
-        }
-    }
-}
-
-static void vim_seek_forward_word_end(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    int pos = (global_mode == NORMAL) ? view.cursor.pos : global_highlight.cursor.pos;
-
-    Cpp_Get_Token_Result get_result = {0};
-    if (buffer_get_token_index(app, &buffer, pos, &get_result)) {
-        int token_index = get_result.token_index;
-        if (get_result.in_whitespace || pos == get_result.token_end-1) {
-            token_index+=1;
-        }
-
-        Cpp_Token chunk[1];
-        Stream_Tokens stream = {0};
-        if (init_stream_tokens(&stream, app, &buffer, token_index, chunk, 1)){
-            Cpp_Token *token = stream.tokens + token_index;
-
-            if (global_mode == NORMAL) {
-                view_set_cursor(app, &view, seek_pos(token->start+token->size-1), true);
-            } else if (global_mode == VISUAL) {
-                highlight_seek(app, &global_highlight, seek_pos(token->start+token->size-1));
-            }
-        }
-    }
-}
-
-static void vim_seek_to_file_end(Application_Links *app)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Seek seek = seek_xy(0.0f, max_f32, 1, true);
-
-    if (global_mode == NORMAL) {
-        view_set_cursor(app, &view, seek, true);
-    } else if (global_mode == VISUAL) {
-        highlight_seek(app, &global_highlight, seek);
-    }
-}
-
-static void vim_seek_beginning_of_line(Application_Links *app)
-{
-    if (global_mode == NORMAL) {
-        exec_command(app, seek_beginning_of_line);
-    } else if (global_mode == VISUAL) {
-        uint32_t access = AccessProtected;
-        View_Summary view = get_active_view(app, access);
-        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-        int pos = buffer_get_line_start(app, &buffer, global_highlight.cursor.line);
-        Buffer_Seek seek = seek_pos(pos);
-        highlight_seek(app, &global_highlight, seek);
-    }
-}
-
-static void vim_seek_end_of_line(Application_Links *app)
-{
-    if (global_mode == NORMAL) {
-        exec_command(app, seek_end_of_line);
-    } else if (global_mode == VISUAL) {
-        uint32_t access = AccessProtected;
-        View_Summary view = get_active_view(app, access);
-        Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-        int pos = buffer_get_line_end(app, &buffer, global_highlight.cursor.line);
-        Buffer_Seek seek = seek_pos(pos);
-        highlight_seek(app, &global_highlight, seek);
-    }
-}
-
 static void vim_ex_command(Application_Links *app)
 {
     char command[1024];
@@ -894,45 +909,57 @@ extern "C" GET_BINDING_DATA(get_bindings)
     end_map(context);
 
     //
+    // VIM Movement Map
+    //
+    begin_map(context, mapid_movement);
+    {
+        inherit_map(context, mapid_global);
+
+        bind(context, 'b', MDFR_NONE, vim_move_back_word);
+        bind(context, 'e', MDFR_NONE, vim_move_forward_word_end);
+        bind(context, 'h', MDFR_NONE, vim_move_left);
+        bind(context, 'j', MDFR_NONE, vim_move_down);
+        bind(context, 'k', MDFR_NONE, vim_move_up);
+        bind(context, 'l', MDFR_NONE, vim_move_right);
+        bind(context, 'w', MDFR_NONE, vim_move_forward_word);
+        bind(context, '$', MDFR_NONE, vim_move_end_of_line);
+        bind(context, '^', MDFR_NONE, vim_move_beginning_of_line);
+
+        bind(context, 'G', MDFR_SHIFT, vim_move_to_file_end);
+
+        bind(context, 'b', MDFR_CTRL, vim_page_up);
+        bind(context, 'f', MDFR_CTRL, vim_page_down);
+    }
+    end_map(context);
+
+    //
     // VIM Normal Mode
     //
     begin_map(context, mapid_normal);
     {
-        inherit_map(context, mapid_global);
+        inherit_map(context, mapid_movement);
 
         bind(context, 'a', MDFR_NONE, vim_append);
-        bind(context, 'b', MDFR_NONE, vim_seek_back_word);
         bind(context, 'd', MDFR_NONE, vim_enter_delete_command_mode);
-        bind(context, 'e', MDFR_NONE, vim_seek_forward_word_end);
         bind(context, 'g', MDFR_NONE, handle_g_key);
-        bind(context, 'h', MDFR_NONE, vim_move_left);
         bind(context, 'i', MDFR_NONE, switch_to_insert_mode);
-        bind(context, 'j', MDFR_NONE, vim_move_down);
-        bind(context, 'k', MDFR_NONE, vim_move_up);
-        bind(context, 'l', MDFR_NONE, vim_move_right);
         bind(context, 'o', MDFR_NONE, vim_newline_below_then_insert);
         bind(context, 'p', MDFR_NONE, vim_paste_after);
         bind(context, 'u', MDFR_NONE, undo);
         bind(context, 'v', MDFR_NONE, toggle_visual_mode);
-        bind(context, 'w', MDFR_NONE, vim_seek_forward_word);
         bind(context, 'x', MDFR_NONE, delete_char);
         bind(context, 'y', MDFR_NONE, handle_y_key);
         bind(context, 'z', MDFR_NONE, handle_z_key);
 
-        bind(context, 'G', MDFR_SHIFT, vim_seek_to_file_end);
         bind(context, 'O', MDFR_SHIFT, vim_newline_above_then_insert);
         bind(context, 'P', MDFR_SHIFT, vim_paste_before);
 
         bind(context, key_back, MDFR_NONE, vim_move_left);
         bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
-        bind(context, '$',      MDFR_NONE, vim_seek_end_of_line);
-        bind(context, '^',      MDFR_NONE, vim_seek_beginning_of_line);
         bind(context, '*',      MDFR_NONE, search_identifier);
         bind(context, ':',      MDFR_NONE, vim_ex_command);
         bind(context, '/',      MDFR_NONE, search);
 
-        bind(context, 'b', MDFR_CTRL, page_up);;
-        bind(context, 'f', MDFR_CTRL, page_down);;
         bind(context, 'h', MDFR_CTRL, change_active_panel_backwards);;
         bind(context, 'j', MDFR_CTRL, change_active_panel);;
         bind(context, 'k', MDFR_CTRL, change_active_panel_backwards);;
@@ -947,7 +974,7 @@ extern "C" GET_BINDING_DATA(get_bindings)
     //
     begin_map(context, mapid_insert);
     {
-        inherit_map(context, mapid_nomap);
+        inherit_map(context, mapid_global);
         bind_vanilla_keys(context, write_character);
 
         bind(context, key_back, MDFR_NONE, backspace_char);
@@ -960,14 +987,10 @@ extern "C" GET_BINDING_DATA(get_bindings)
     //
     begin_map(context, mapid_visual);
     {
-        inherit_map(context, mapid_nomap);
+        inherit_map(context, mapid_movement);
 
-        bind(context, 'h', MDFR_NONE, vim_move_left);
-        bind(context, 'j', MDFR_NONE, vim_move_down);
-        bind(context, 'k', MDFR_NONE, vim_move_up);
-        bind(context, 'l', MDFR_NONE, vim_move_right);
-
-        bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
+        bind(context, 'v',     MDFR_NONE, toggle_visual_mode);
+        bind(context, key_esc, MDFR_NONE, switch_to_normal_mode);
     }
     end_map(context);
 

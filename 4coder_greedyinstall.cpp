@@ -42,10 +42,20 @@
 
 enum VimMode
 {
-    NORMAL = (1 << 16),
+    NORMAL = 0,
     INSERT,
     VISUAL,
     VISUAL_BLOCK,
+};
+
+enum VimKeyMaps
+{
+    mapid_normal = (1 << 16),
+    mapid_insert,
+    mapid_visual,
+    mapid_visual_block,
+
+    mapid_delete,
 };
 
 enum CommandMode
@@ -119,6 +129,13 @@ static void sync_to_mode(Application_Links *app)
     } else if (global_mode == INSERT) {
         set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
     }
+}
+
+static void set_current_map(Application_Links *app, int buffer_id, int mapid)
+{
+    unsigned int access = AccessAll;
+    Buffer_Summary buffer = get_buffer(app, buffer_id, access);
+    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid);
 }
 
 static VimHighlight highlight_start(Application_Links *app)
@@ -209,9 +226,11 @@ static void yank_current_line(Application_Links *app)
     yank_range(app, start, end);
 }
 
-static void enter_d_command_mode()
+CUSTOM_COMMAND_SIG(vim_enter_delete_command_mode)
 {
-    global_command_mode = D_COMMANDS;
+    uint32_t access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    set_current_map(app, view.buffer_id, mapid_delete);
 }
 
 static void enter_g_command_mode()
@@ -229,17 +248,16 @@ static void enter_z_command_mode()
     global_command_mode = Z_COMMANDS;
 }
 
-static void enter_none_command_mode()
-{
-    global_command_mode = NONE;
-}
-
 // Mode Switching
 
 CUSTOM_COMMAND_SIG(switch_to_insert_mode)
 {
     global_mode = INSERT;
     sync_to_mode(app);
+
+    int access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    set_current_map(app, view.buffer_id, mapid_insert);
 }
 
 CUSTOM_COMMAND_SIG(switch_to_normal_mode)
@@ -247,11 +265,14 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
     VimMode prev_mode = global_mode;
     global_mode = NORMAL;
     sync_to_mode(app);
-    enter_none_command_mode();
 
     if (prev_mode == VISUAL) {
         highlight_end(app, &global_highlight);
     }
+
+    int access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    set_current_map(app, view.buffer_id, mapid_normal);
 }
 
 CUSTOM_COMMAND_SIG(toggle_visual_mode)
@@ -266,16 +287,12 @@ CUSTOM_COMMAND_SIG(toggle_visual_mode)
     }
 }
 
-CUSTOM_COMMAND_SIG(handle_d_key)
+CUSTOM_COMMAND_SIG(vim_delete_line)
 {
-    if (global_command_mode == NONE) {
-        enter_d_command_mode();
-    } else if (global_command_mode == D_COMMANDS) {
-        // Delete the current line while keeping its contents in the yank register.
-        yank_current_line(app);
-        exec_command(app, delete_line);
-        enter_none_command_mode();
-    }
+    yank_current_line(app);
+    exec_command(app, delete_line);
+
+    exec_command(app, switch_to_normal_mode);
 }
 
 CUSTOM_COMMAND_SIG(handle_g_key)
@@ -293,8 +310,6 @@ CUSTOM_COMMAND_SIG(handle_g_key)
         } else {
             highlight_seek(app, &global_highlight, seek);
         }
-
-        enter_none_command_mode();
     }
 }
 
@@ -305,7 +320,6 @@ CUSTOM_COMMAND_SIG(handle_y_key)
             enter_y_command_mode();
         } else if (global_command_mode == Y_COMMANDS) {
             yank_current_line(app);
-            enter_none_command_mode();
         }
     } else if (global_mode == VISUAL) {
         uint32_t access = AccessProtected;
@@ -334,18 +348,12 @@ CUSTOM_COMMAND_SIG(handle_z_key)
     } else {
         // Center the view on the cursor.
         exec_command(app, center_view);
-        enter_none_command_mode();
     }
 }
 
 //
 // Editing
 //
-static void vim_handle_tab(Application_Links *app)
-{
-	write_string(app, make_lit_string("    "));
-}
-
 static void vim_append(Application_Links *app)
 {
     uint32_t access = AccessOpen;
@@ -810,106 +818,8 @@ static void vim_ex_command(Application_Links *app)
 }
 
 //
-// Bindings
-//
-
-static void vim_handle_key_normal(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
-{
-    if (modifier == MDFR_NONE || modifier == MDFR_SHIFT)
-    {
-        switch(code)
-        {
-            case 'a': vim_append(app); break;
-            case 'b': vim_seek_back_word(app); break;
-            case 'd': handle_d_key(app); break;
-            case 'e': vim_seek_forward_word_end(app); break;
-            case 'g': handle_g_key(app); break;
-            case 'h': vim_move_left(app); break;
-            case 'i': switch_to_insert_mode(app); break;
-            case 'j': vim_move_down(app); break;
-            case 'k': vim_move_up(app); break;
-            case 'l': vim_move_right(app); break;
-            case 'o': vim_newline_below_then_insert(app); break;
-            case 'p': vim_paste_after(app); break;
-            case 'u': exec_command(app, undo); break;
-            case 'v': exec_command(app, toggle_visual_mode); break;
-            case 'w': vim_seek_forward_word(app); break;
-            case 'x': exec_command(app, delete_char); break;
-            case 'y': handle_y_key(app); break;
-            case 'z': handle_z_key(app); break;
-
-            case 'G': vim_seek_to_file_end(app); break;
-            case 'O': vim_newline_above_then_insert(app); break;
-            case 'P': vim_paste_before(app); break;
-
-            case key_back: vim_move_left(app); break;
-            case key_esc: exec_command(app, switch_to_normal_mode); break;
-            case '$': vim_seek_end_of_line(app); break;
-            case '^': vim_seek_beginning_of_line(app); break;
-            case '*': exec_command(app, search_identifier); break;
-            case ':': vim_ex_command(app); break;
-            case '/': exec_command(app, search); break;
-        }
-    }
-    else if (modifier == MDFR_CTRL)
-    {
-        switch(code)
-        {
-            case 'b': exec_command(app, page_up); break;
-            case 'f': exec_command(app, page_down); break;
-            case 'h': exec_command(app, change_active_panel_backwards); break;
-            case 'j': exec_command(app, change_active_panel); break;
-            case 'k': exec_command(app, change_active_panel_backwards); break;
-            case 'l': exec_command(app, change_active_panel); break;
-            case 'r': exec_command(app, redo); break;
-            case 'p': exec_command(app, interactive_open_or_new); break;
-        }
-    }
-}
-
-void vim_handle_key_insert(Application_Links *app, Key_Code code, Key_Modifier_Flag modifier)
-{
-    switch(code)
-    {
-        case key_back: exec_command(app, backspace_char); break;
-        case key_esc: exec_command(app, switch_to_normal_mode); break;
-        case '\t': exec_command(app, vim_handle_tab); break;
-        default: exec_command(app, write_character);
-    }
-}
-
-CUSTOM_COMMAND_SIG(vim_handle_key)
-{
-    User_Input input = get_command_input(app);
-    if (input.abort) return;
-
-    if (input.type == UserInputKey) {
-        Key_Modifier_Flag modifier = MDFR_NONE;
-        if (input.key.modifiers[MDFR_SHIFT_INDEX])   { modifier |= MDFR_SHIFT; }
-        if (input.key.modifiers[MDFR_CONTROL_INDEX]) { modifier |= MDFR_CTRL; }
-        if (input.key.modifiers[MDFR_ALT_INDEX])     { modifier |= MDFR_ALT; }
-        if (input.key.modifiers[MDFR_COMMAND_INDEX]) { modifier |= MDFR_CMND; }
-
-        if (global_mode != INSERT) {
-            vim_handle_key_normal(app, input.key.keycode, modifier);
-        } else {
-            vim_handle_key_insert(app, input.key.keycode, modifier);
-        }
-    }
-}
-
 //
 //
-//
-
-static void set_current_map(Application_Links *app, int mapid)
-{
-    unsigned int access = AccessAll;
-    View_Summary view = get_active_view(app, access);
-    Buffer_Summary buffer = get_buffer(app, view.buffer_id, access);
-
-    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid);
-}
 
 START_HOOK_SIG(greedy_start)
 {
@@ -932,7 +842,6 @@ START_HOOK_SIG(greedy_start)
 
     set_global_face_by_name(app, literal("SourceCodePro-Regular"), true);
 
-    set_current_map(app, NORMAL);
     global_mode = NORMAL;
     sync_to_mode(app);
 
@@ -941,6 +850,7 @@ START_HOOK_SIG(greedy_start)
 
 OPEN_FILE_HOOK_SIG(greedy_file_settings)
 {
+#if 0
     unsigned int access = AccessAll;
     Buffer_Summary buffer = get_buffer(app, buffer_id, access);
 
@@ -948,6 +858,10 @@ OPEN_FILE_HOOK_SIG(greedy_file_settings)
     buffer_set_setting(app, &buffer, BufferSetting_VirtualWhitespace, 0);
     buffer_set_setting(app, &buffer, BufferSetting_Eol, 0); // unix endings
     buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid_file);
+#endif
+
+    default_file_settings(app, buffer_id);
+    set_current_map(app, buffer_id, mapid_normal);
 
     return 0;
 }
@@ -963,26 +877,32 @@ extern "C" GET_BINDING_DATA(get_bindings)
 
     set_start_hook(context, greedy_start);
     set_command_caller(context, default_command_caller);
-    set_open_file_hook(context, default_file_settings);
+    set_open_file_hook(context, greedy_file_settings);
+    set_new_file_hook(context, greedy_file_settings);
     set_scroll_rule(context, smooth_scroll_rule);
     set_end_file_hook(context, default_end_file);
 
+    //
+    // 4coder specific
+    //
     begin_map(context, mapid_global);
     {
-        //
-        // 4coder specific
-        //
         bind(context, key_f4, MDFR_ALT, exit_4coder);
         bind(context, '\n', MDFR_ALT, toggle_fullscreen);
         bind(context, key_insert, MDFR_SHIFT, paste_and_indent);
     }
     end_map(context);
 
-    begin_map(context, NORMAL);
+    //
+    // VIM Normal Mode
+    //
+    begin_map(context, mapid_normal);
     {
+        inherit_map(context, mapid_global);
+
         bind(context, 'a', MDFR_NONE, vim_append);
         bind(context, 'b', MDFR_NONE, vim_seek_back_word);
-        bind(context, 'd', MDFR_NONE, handle_d_key);
+        bind(context, 'd', MDFR_NONE, vim_enter_delete_command_mode);
         bind(context, 'e', MDFR_NONE, vim_seek_forward_word_end);
         bind(context, 'g', MDFR_NONE, handle_g_key);
         bind(context, 'h', MDFR_NONE, vim_move_left);
@@ -1010,28 +930,59 @@ extern "C" GET_BINDING_DATA(get_bindings)
         bind(context, '*',      MDFR_NONE, search_identifier);
         bind(context, ':',      MDFR_NONE, vim_ex_command);
         bind(context, '/',      MDFR_NONE, search);
+
+        bind(context, 'b', MDFR_CTRL, page_up);;
+        bind(context, 'f', MDFR_CTRL, page_down);;
+        bind(context, 'h', MDFR_CTRL, change_active_panel_backwards);;
+        bind(context, 'j', MDFR_CTRL, change_active_panel);;
+        bind(context, 'k', MDFR_CTRL, change_active_panel_backwards);;
+        bind(context, 'l', MDFR_CTRL, change_active_panel);;
+        bind(context, 'r', MDFR_CTRL, redo);;
+        bind(context, 'p', MDFR_CTRL, interactive_open_or_new);;
     }
     end_map(context);
 
-#if 0
-    begin_map(context, mapid_file);
+    //
+    // VIM Insert Mode
+    //
+    begin_map(context, mapid_insert);
     {
+        inherit_map(context, mapid_nomap);
         bind_vanilla_keys(context, write_character);
 
-        //
-        // VIM
-        //
-        bind(context, key_esc, MDFR_NONE, vim_handle_key);
-        bind(context, key_back, MDFR_NONE, vim_handle_key);
-        bind(context, '\t', MDFR_NONE, vim_handle_key);
-
-        for (Key_Code code = ' '; code <= '~'; ++code) {
-            bind(context, code, MDFR_NONE, vim_handle_key);
-            bind(context, code, MDFR_CTRL, vim_handle_key);
-        }
+        bind(context, key_back, MDFR_NONE, backspace_char);
+        bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
     }
     end_map(context);
-#endif
+
+    //
+    // VIM Visual Mode
+    //
+    begin_map(context, mapid_visual);
+    {
+        inherit_map(context, mapid_nomap);
+
+        bind(context, 'h', MDFR_NONE, vim_move_left);
+        bind(context, 'j', MDFR_NONE, vim_move_down);
+        bind(context, 'k', MDFR_NONE, vim_move_up);
+        bind(context, 'l', MDFR_NONE, vim_move_right);
+
+        bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
+    }
+    end_map(context);
+
+    //
+    // VIM delete chord
+    //
+    begin_map(context, mapid_delete);
+    {
+        inherit_map(context, mapid_nomap);
+
+        bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
+        bind(context, 'd',      MDFR_NONE, vim_delete_line);
+    }
+    end_map(context);
+
 
     end_bind_helper(context);
     return context->write_total;

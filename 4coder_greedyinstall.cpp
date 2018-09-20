@@ -62,7 +62,7 @@ enum VimKeyMaps
 enum CommandMode
 {
     NONE = 0,
-    D_COMMANDS,
+    DELETE,
     G_COMMANDS,
     Y_COMMANDS,
     Z_COMMANDS,
@@ -109,6 +109,38 @@ static Register global_yank_register = {
     UNKNOWN, 0, 0, 0
 };
 static VimHighlight global_highlight = {0};
+
+//
+// Mode Helpers
+//
+static void set_current_map(Application_Links *app, int buffer_id, int mapid)
+{
+    unsigned int access = AccessAll;
+    Buffer_Summary buffer = get_buffer(app, buffer_id, access);
+    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid);
+}
+
+static void sync_to_mode(Application_Links *app)
+{
+    unsigned int insert = 0xFF719E07;
+    unsigned int normal = 0xFF839496;
+
+    Theme_Color normal_mode_colors[] = {
+        {Stag_Cursor, normal},
+        {Stag_Margin_Active, normal},
+    };
+
+    Theme_Color insert_mode_colors[] = {
+        {Stag_Cursor, insert},
+        {Stag_Margin_Active, insert},
+    };
+
+    if (global_mode == NORMAL) {
+        set_theme_colors(app, normal_mode_colors, ArrayCount(normal_mode_colors));
+    } else if (global_mode == INSERT) {
+        set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
+    }
+}
 
 //
 // Movement
@@ -342,86 +374,9 @@ static void vim_page_down(Application_Links *app)
     exec_command(app, page_down);
 }
 
-// Helpers
-static void sync_to_mode(Application_Links *app)
-{
-    unsigned int insert = 0xFF719E07;
-    unsigned int normal = 0xFF839496;
-
-    Theme_Color normal_mode_colors[] = {
-        {Stag_Cursor, normal},
-        {Stag_Margin_Active, normal},
-    };
-
-    Theme_Color insert_mode_colors[] = {
-        {Stag_Cursor, insert},
-        {Stag_Margin_Active, insert},
-    };
-
-    if (global_mode == NORMAL) {
-        set_theme_colors(app, normal_mode_colors, ArrayCount(normal_mode_colors));
-    } else if (global_mode == INSERT) {
-        set_theme_colors(app, insert_mode_colors, ArrayCount(insert_mode_colors));
-    }
-}
-
-static void set_current_map(Application_Links *app, int buffer_id, int mapid)
-{
-    unsigned int access = AccessAll;
-    Buffer_Summary buffer = get_buffer(app, buffer_id, access);
-    buffer_set_setting(app, &buffer, BufferSetting_MapID, mapid);
-}
-
-static VimHighlight highlight_start(Application_Links *app)
-{
-    VimHighlight highlight = {0};
-
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-
-    highlight.cursor = view.cursor;
-    highlight.start = view.cursor.pos;
-    highlight.end = view.cursor.pos;
-
-    view_set_highlight(app, &view, highlight.start, highlight.end+1, true);
-
-    return highlight;
-}
-
-static void highlight_end(Application_Links *app, VimHighlight *highlight)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-
-    view_set_highlight(app, &view, highlight->start, highlight->end+1, false);
-    view_set_cursor(app, &view, seek_pos(highlight->cursor.pos), true);
-}
-
-static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buffer_Seek seek)
-{
-    uint32_t access = AccessProtected;
-    View_Summary view = get_active_view(app, access);
-
-    int old_pos = highlight->cursor.pos;
-    if (view_compute_cursor(app, &view, seek, &highlight->cursor)) {
-        if (old_pos == highlight->start) {
-            highlight->start = highlight->cursor.pos;
-        } else if (old_pos == highlight->end) {
-            highlight->end = highlight->cursor.pos;
-        } else {
-            assert(!"Unexpected highlight position");
-        }
-
-        if (highlight->end < highlight->start) {
-            int temp = highlight->start;
-            highlight->start = highlight->end;
-            highlight->end = temp;
-        }
-
-        view_set_highlight(app, &view, highlight->start, highlight->end+1, true);
-    }
-}
-
+//
+// Vim Yank
+//
 static void yank_range(Application_Links *app, int start, int end)
 {
     uint32_t access = AccessProtected;
@@ -459,13 +414,138 @@ static void yank_current_line(Application_Links *app)
 
     yank_range(app, start, end);
 }
+//
+// Vim Highlight
+//
+
+static VimHighlight highlight_start(Application_Links *app)
+{
+    VimHighlight highlight = {0};
+
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    highlight.cursor = view.cursor;
+    highlight.start = view.cursor.pos;
+    highlight.end = view.cursor.pos;
+
+    view_set_highlight(app, &view, highlight.start, highlight.end+1, true);
+
+    return highlight;
+}
+
+static void highlight_end(Application_Links *app, VimHighlight *highlight, bool update_cursor)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    view_set_highlight(app, &view, highlight->start, highlight->end+1, false);
+
+    if (update_cursor) {
+        view_set_cursor(app, &view, seek_pos(highlight->cursor.pos), true);
+    }
+}
+
+static void enter_visual_mode(Application_Links *app)
+{
+    global_mode = VISUAL;
+    sync_to_mode(app);
+
+    int access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    set_current_map(app, view.buffer_id, mapid_visual);
+
+    global_highlight = highlight_start(app);
+}
+
+static void exit_visual_mode(Application_Links *app, bool update_cursor)
+{
+    global_mode = NORMAL;
+    sync_to_mode(app);
+
+    int access = AccessAll;
+    View_Summary view = get_active_view(app, access);
+    set_current_map(app, view.buffer_id, mapid_normal);
+
+    highlight_end(app, &global_highlight, update_cursor);
+}
+
+CUSTOM_COMMAND_SIG(toggle_visual_mode)
+{
+    if (global_mode != VISUAL) {
+        enter_visual_mode(app);
+    } else {
+        exit_visual_mode(app, true);
+    }
+}
+
+static void highlight_seek(Application_Links *app, VimHighlight *highlight, Buffer_Seek seek)
+{
+    uint32_t access = AccessProtected;
+    View_Summary view = get_active_view(app, access);
+
+    int old_pos = highlight->cursor.pos;
+    if (view_compute_cursor(app, &view, seek, &highlight->cursor)) {
+        if (old_pos == highlight->start) {
+            highlight->start = highlight->cursor.pos;
+        } else if (old_pos == highlight->end) {
+            highlight->end = highlight->cursor.pos;
+        } else {
+            assert(!"Unexpected highlight position");
+        }
+
+        if (highlight->end < highlight->start) {
+            int temp = highlight->start;
+            highlight->start = highlight->end;
+            highlight->end = temp;
+        }
+
+        view_set_highlight(app, &view, highlight->start, highlight->end+1, true);
+    }
+}
+
+//
+// Vim Delete
+//
+
+void toggle_visual_mode(Application_Links *app);
 
 CUSTOM_COMMAND_SIG(vim_enter_delete_command_mode)
 {
+    global_command_mode = DELETE;
+
     uint32_t access = AccessAll;
     View_Summary view = get_active_view(app, access);
     set_current_map(app, view.buffer_id, mapid_delete);
 }
+
+static void vim_delete_range(Application_Links *app, int start, int end, bool save_to_yank_register)
+{
+    View_Summary view = get_active_view(app, AccessOpen);
+    Buffer_Summary buffer = get_buffer(app, view.buffer_id, AccessOpen);
+
+    view_set_cursor(app, &view, seek_pos(start), true);
+
+    if (save_to_yank_register) {
+        yank_range(app, start, end);
+    }
+    buffer_replace_range(app, &buffer, start, end+1, 0, 0);
+}
+
+static void vim_delete(Application_Links *app)
+{
+    if (global_mode == VISUAL) {
+        vim_delete_range(app, global_highlight.start, global_highlight.end, true);
+        exit_visual_mode(app, false);
+    } else if (global_command_mode == DELETE) {
+        yank_current_line(app);
+        exec_command(app, delete_line);
+        global_command_mode = NONE;
+    } else {
+        vim_enter_delete_command_mode(app);
+    }
+}
+
 
 static void enter_g_command_mode()
 {
@@ -501,32 +581,12 @@ CUSTOM_COMMAND_SIG(switch_to_normal_mode)
     sync_to_mode(app);
 
     if (prev_mode == VISUAL) {
-        highlight_end(app, &global_highlight);
+        highlight_end(app, &global_highlight, true);
     }
 
     int access = AccessAll;
     View_Summary view = get_active_view(app, access);
     set_current_map(app, view.buffer_id, mapid_normal);
-}
-
-CUSTOM_COMMAND_SIG(toggle_visual_mode)
-{
-    global_mode = (global_mode == VISUAL) ? NORMAL : VISUAL;
-    sync_to_mode(app);
-
-    if (global_mode == VISUAL) {
-        global_highlight = highlight_start(app);
-    } else if (global_mode == NORMAL) {
-        highlight_end(app, &global_highlight);
-    }
-}
-
-CUSTOM_COMMAND_SIG(vim_delete_line)
-{
-    yank_current_line(app);
-    exec_command(app, delete_line);
-
-    exec_command(app, switch_to_normal_mode);
 }
 
 CUSTOM_COMMAND_SIG(handle_g_key)
@@ -611,19 +671,6 @@ static void vim_newline_above_then_insert(Application_Links *app)
     exec_command(app, move_up);
     exec_command(app, auto_tab_line_at_cursor);
     exec_command(app, switch_to_insert_mode);
-}
-
-static void vim_delete_highlight(Application_Links *app, bool save_to_yank_register)
-{
-    if (global_mode == VISUAL) {
-        View_Summary view = get_active_view(app, AccessOpen);
-        Buffer_Summary buffer = get_buffer(app, view.buffer_id, AccessOpen);
-
-        if (save_to_yank_register) {
-            yank_range(app, global_highlight.start, global_highlight.end);
-        }
-        buffer_replace_range(app, &buffer, global_highlight.start, global_highlight.end+1, 0, 0);
-    }
 }
 
 // TODO(joe): vim_paste_before/after() can be compressed better.
@@ -990,19 +1037,21 @@ extern "C" GET_BINDING_DATA(get_bindings)
         inherit_map(context, mapid_movement);
 
         bind(context, 'v',     MDFR_NONE, toggle_visual_mode);
+        bind(context, 'd',     MDFR_NONE, vim_delete);
+        bind(context, 'x',     MDFR_NONE, vim_delete);
         bind(context, key_esc, MDFR_NONE, switch_to_normal_mode);
     }
     end_map(context);
 
     //
-    // VIM delete chord
+    // VIM Delete chord
     //
     begin_map(context, mapid_delete);
     {
-        inherit_map(context, mapid_nomap);
+        inherit_map(context, mapid_movement);
 
         bind(context, key_esc,  MDFR_NONE, switch_to_normal_mode);
-        bind(context, 'd',      MDFR_NONE, vim_delete_line);
+        bind(context, 'd',      MDFR_NONE, vim_delete);
     }
     end_map(context);
 
